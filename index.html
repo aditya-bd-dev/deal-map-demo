@@ -1,16 +1,16 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
   <title>Deal Map</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
-    body, html { margin:0; padding:0; height:100%; }
-    #map { height:100vh; width:100%; }
-    .legend { background:white; padding:8px; border-radius:4px; box-shadow:0 1px 4px rgba(0,0,0,0.3); }
-    .legend .item { display:flex; gap:6px; align-items:center; margin:4px 0; }
-    .dot { width:12px; height:12px; border-radius:50%; display:inline-block; }
+    html,body,#map{height:100%;margin:0;padding:0}
+    #map{width:100%;height:100vh}
+    .legend{background:#fff;padding:8px;border-radius:4px;box-shadow:0 1px 4px rgba(0,0,0,.3);font-family:Arial;font-size:13px}
+    .legend .item{display:flex;align-items:center;gap:8px;margin:4px 0}
+    .legend .marker{width:18px;height:28px;background-size:contain;background-repeat:no-repeat}
   </style>
 </head>
 <body>
@@ -18,53 +18,90 @@
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
+    // Marker icon URLs (public raw files)
+    const ICONS = {
+      green: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png",
+      orange: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-orange.png",
+      red: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png",
+      shadow: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png"
+    };
+
+    function createIcon(url) {
+      return L.icon({
+        iconUrl: url,
+        iconSize: [25,41],
+        iconAnchor: [12,41],
+        popupAnchor: [1,-34],
+        shadowUrl: ICONS.shadow,
+        shadowSize: [41,41]
+      });
+    }
+
+    const icons = {
+      Active: createIcon(ICONS.green),
+      "On Hold": createIcon(ICONS.orange),
+      Dropped: createIcon(ICONS.red),
+      default: createIcon(ICONS.red)
+    };
+
+    // init map
     const map = L.map('map').setView([20.5937,78.9629],5);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18}).addTo(map);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
 
     // legend
     const legend = L.control({position:'topright'});
-    legend.onAdd = function() {
+    legend.onAdd = () => {
       const div = L.DomUtil.create('div','legend');
-      div.innerHTML = '<div style="font-weight:bold">Legend</div>' +
-        '<div class="item"><span class="dot" style="background:green"></span>Active</div>' +
-        '<div class="item"><span class="dot" style="background:orange"></span>On Hold</div>' +
-        '<div class="item"><span class="dot" style="background:red"></span>Dropped</div>';
+      div.innerHTML = '<b>Legend</b>' +
+        '<div class="item"><span class="marker" style="background-image:url(' + ICONS.green + ')"></span> Active</div>' +
+        '<div class="item"><span class="marker" style="background-image:url(' + ICONS.orange + ')"></span> On Hold</div>' +
+        '<div class="item"><span class="marker" style="background-image:url(' + ICONS.red + ')"></span> Dropped</div>';
       return div;
     };
     legend.addTo(map);
 
-    // Fetch geojson from same site (relative path)
-    fetch('dealdata.geojson')
+    // read ?file= param (Power Apps could pass if needed) — fallback to relative path
+    const params = new URLSearchParams(window.location.search);
+    const geoUrl = params.get('file') || 'dealdata.geojson';
+
+    fetch(geoUrl)
       .then(r => {
-        if(!r.ok) throw new Error('Fetch failed: ' + r.status);
+        if(!r.ok) throw new Error('Fetch failed: ' + r.status + ' ' + r.statusText);
         return r.json();
       })
       .then(data => {
-        const geoLayer = L.geoJSON(data, {
+        const layer = L.geoJSON(data, {
           pointToLayer: (feature, latlng) => {
-            const st = feature.properties?.Status || '';
-            const color = st === 'Active' ? 'green' : st === 'On Hold' ? 'orange' : 'red';
-            return L.circleMarker(latlng, { radius:7, color:color, fillOpacity:0.9 });
+            const s = (feature.properties && feature.properties.Status) || '';
+            const icon = icons[s] || icons.default;
+            return L.marker(latlng, { icon: icon });
           },
           onEachFeature: (feature, layer) => {
             const p = feature.properties || {};
-            const popup = `<b>Lead:</b> ${p.LeadName||''}<br>
-                           <b>Owner:</b> ${p.PrimaryOwner||''}<br>
-                           <b>Status:</b> ${p.Status||''}<br>
-                           <b>Stage:</b> ${p.Stage||''}<br>
-                           <b>City:</b> ${p.City||''}<br>
-                           <b>Site:</b> ${p.SiteLocation||''}`;
+            const popup = `<div style="font-family:Arial;font-size:13px">
+              <b>Lead:</b> ${p.LeadName||''}<br/>
+              <b>Owner:</b> ${p.PrimaryOwner||''}<br/>
+              <b>DealID:</b> ${p.DealID||''}<br/>
+              <b>Status:</b> ${p.Status||''}<br/>
+              <b>Stage:</b> ${p.Stage||''}<br/>
+              <b>City:</b> ${p.City||''}<br/>
+              <b>Site:</b> ${p.SiteLocation||''}<br/>
+              <b>Comments:</b> ${p.Comments||''}
+            </div>`;
             layer.bindPopup(popup);
           }
         }).addTo(map);
 
-        if(geoLayer.getBounds && geoLayer.getBounds().isValid()){
-          map.fitBounds(geoLayer.getBounds(), { padding: [20,20] });
+        if(layer.getBounds && layer.getBounds().isValid()){
+          map.fitBounds(layer.getBounds(), { padding: [20,20] });
+        } else {
+          // if no features, keep default view
+          console.warn('No valid bounds from GeoJSON.');
         }
       })
       .catch(err => {
-        console.error(err);
-        alert('Could not load dealdata.geojson: ' + err.message);
+        console.error('Error loading geojson:', err);
+        alert('Could not load deal data: ' + err.message);
       });
   </script>
 </body>
