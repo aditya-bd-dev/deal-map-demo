@@ -8,28 +8,10 @@
   <style>
     html, body { height: 100%; margin: 0; padding: 0; }
     #map { width: 100%; height: 100vh; }
-    .legend {
-      background: #fff;
-      padding: 8px;
-      border-radius: 6px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
-      font-family: Arial, sans-serif;
-      font-size: 13px;
-    }
+    .legend { background: #fff; padding: 8px; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.3); font-family: Arial, sans-serif; font-size: 13px; }
     .legend .item { display:flex; align-items:center; gap:8px; margin:6px 0; }
     .legend .marker { width:18px; height:28px; background-size:contain; background-repeat:no-repeat; display:inline-block; }
-    .loading {
-      position: absolute;
-      left: 12px;
-      top: 12px;
-      z-index: 1000;
-      background: rgba(255,255,255,0.9);
-      padding: 6px 10px;
-      border-radius: 4px;
-      font-family: Arial, sans-serif;
-      font-size: 13px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-    }
+    .loading { position: absolute; left: 12px; top: 12px; z-index: 1000; background: rgba(255,255,255,0.95); padding: 6px 10px; border-radius: 4px; font-family: Arial, sans-serif; font-size: 13px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
   </style>
 </head>
 <body>
@@ -39,15 +21,13 @@
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
     // -------------------------
-    // Configurable section
+    // Configuration
     // -------------------------
     const OWNER = 'aditya-bd-dev';
     const REPO = 'deal-map-demo';
-    const DEFAULT_FILE = 'dealdata.geojson'; // the single file you overwrite
-    const DEFAULT_INDEX = 'index.html';
+    const DEFAULT_FILE = 'dealdata.geojson'; // single file you overwrite
     // -------------------------
 
-    // Marker icons (public small PNGs on GitHub)
     const ICONS = {
       green: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png",
       orange: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-orange.png",
@@ -73,11 +53,11 @@
       default: createIcon(ICONS.red)
     };
 
-    // Initialize map
+    // init map
     const map = L.map('map').setView([20.5937, 78.9629], 5);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
-    // Legend
+    // legend
     const legend = L.control({ position: 'topright' });
     legend.onAdd = () => {
       const div = L.DomUtil.create('div', 'legend');
@@ -89,57 +69,39 @@
     };
     legend.addTo(map);
 
-    // Show / hide loading indicator
     function hideLoading(){ const el = document.getElementById('loading'); if(el) el.style.display='none'; }
     function showLoading(msg){ const el = document.getElementById('loading'); if(el){ el.innerText = msg || 'Loading map…'; el.style.display='block'; } }
 
-    // Determine which file to fetch:
-    // Priority:
-    // 1) ?file= full path or filename provided in query param (Power Apps will pass indexUrl?file=... if used)
-    // 2) DEFAULT_FILE (dealdata.geojson in repo root)
+    // read ?file param optionally
     const params = new URLSearchParams(window.location.search);
-    let geoParam = params.get('file'); // optional: file name or full URL
-    const useGitHubApi = false; // set true if you prefer to fetch via GitHub API (not required for public Pages + cache busting)
+    const fileParam = params.get('file'); // optional file name passed from Power Apps
 
-    // Build final fetch URL:
-    // If user passed a full URL (starts with http), use it; otherwise treat as relative path within site.
-    function buildFetchUrl(fileParam) {
-      // If full http(s) url supplied, use it (and append cache buster)
-      if(!fileParam) fileParam = DEFAULT_FILE;
-      if(/^https?:\/\//i.test(fileParam)) {
-        return fileParam + (fileParam.indexOf('?') === -1 ? '?t=' + Date.now() : '&t=' + Date.now());
-      }
-      // Relative path: request from the same site (GitHub Pages root)
-      return fileParam + '?t=' + Date.now();
+    // build request URL: use relative Pages first, then fallback to raw.githubusercontent
+    function buildUrls(fileName) {
+      const rel = (fileName || DEFAULT_FILE) + '?t=' + Date.now(); // relative (Pages)
+      const raw = 'https://raw.githubusercontent.com/' + OWNER + '/' + REPO + '/main/' + (fileName || DEFAULT_FILE) + '?t=' + Date.now(); // raw content
+      return { relative: rel, raw: raw };
     }
 
-    // Primary fetch function (cache-busting)
-    function fetchGeoJsonAndRender() {
-      showLoading('Loading deal data…');
-
-      // If geoParam not provided, default to DEFAULT_FILE
-      const fileToFetch = geoParam || DEFAULT_FILE;
-      const requestUrl = buildFetchUrl(fileToFetch);
-
-      // Use fetch with no-store to try to avoid browser cache
-      fetch(requestUrl, { cache: 'no-store' })
-        .then(response => {
-          if (!response.ok) {
-            // If we get 404 when requesting relative path, try GitHub raw URL as fallback
-            if(response.status === 404) {
-              console.warn('Relative path fetch returned 404, trying raw.githubusercontent fallback.');
-              // Construct raw.githubusercontent URL for repo root file (works if repo is public)
-              // NOTE: this fallback assumes the file is in the repo root on the main branch.
-              const rawUrl = 'https://raw.githubusercontent.com/' + OWNER + '/' + REPO + '/main/' + (geoParam || DEFAULT_FILE) + '?t=' + Date.now();
-              return fetch(rawUrl, { cache: 'no-store' });
+    function fetchGeojson() {
+      showLoading('Loading deal data...');
+      const urls = buildUrls(fileParam);
+      // First try Pages-relative URL (same origin) with no-store
+      fetch(urls.relative, { cache: 'no-store' })
+        .then(r => {
+          if (!r.ok) {
+            // if 404 try raw.githubusercontent fallback
+            if (r.status === 404) {
+              console.warn('Pages-relative fetch 404 — trying raw.githubusercontent fallback');
+              return fetch(urls.raw, { cache: 'no-store' });
             }
-            throw new Error('Fetch failed: ' + response.status + ' ' + response.statusText);
+            throw new Error('Fetch failed: ' + r.status + ' ' + r.statusText);
           }
-          return response;
+          return r;
         })
-        .then(resp => {
-          if(!resp.ok) throw new Error('Final fetch failed: ' + resp.status + ' ' + resp.statusText);
-          return resp.json();
+        .then(r2 => {
+          if (!r2.ok) throw new Error('Final fetch failed: ' + r2.status + ' ' + r2.statusText);
+          return r2.json();
         })
         .then(data => {
           hideLoading();
@@ -147,19 +109,17 @@
         })
         .catch(err => {
           hideLoading();
-          console.error('Error loading dealdata.geojson:', err);
-          alert('Could not load deal data: ' + err.message);
+          console.error('Could not fetch deal data:', err);
+          alert('Could not fetch deal data: ' + (err.message || 'unknown'));
         });
     }
 
-    // Render GeoJSON into the map
+    // render
     function renderGeoJson(data) {
-      // Remove any existing GeoJSON layers (simple approach)
       if (window._dealLayer) {
-        try { map.removeLayer(window._dealLayer); } catch (e) { /* ignore */ }
+        try { map.removeLayer(window._dealLayer); } catch(e){ }
         window._dealLayer = null;
       }
-
       window._dealLayer = L.geoJSON(data, {
         pointToLayer: function(feature, latlng) {
           const status = (feature.properties && feature.properties.Status) || '';
@@ -182,17 +142,15 @@
         }
       }).addTo(map);
 
-      // Fit bounds if possible
       if (window._dealLayer && window._dealLayer.getBounds && window._dealLayer.getBounds().isValid()) {
         map.fitBounds(window._dealLayer.getBounds(), { padding: [20,20] });
       } else {
-        // no valid bounds — keep default view
-        console.warn('GeoJSON had no valid bounds; keeping default map view.');
+        console.warn('No valid bounds from GeoJSON — keeping default view.');
       }
     }
 
-    // Kick off fetch & render
-    fetchGeoJsonAndRender();
+    // start
+    fetchGeojson();
   </script>
 </body>
 </html>
