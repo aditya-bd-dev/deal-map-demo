@@ -1,37 +1,38 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Deal Map Demo (No Data)</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <style>
-    html,body,#map { height:100%; margin:0; padding:0; }
-    .topbar { position:absolute; left:10px; top:10px; z-index:1000; background:#fff; padding:6px 8px; border-radius:6px; box-shadow:0 1px 4px rgba(0,0,0,0.2); font-family:Arial,Helvetica,sans-serif; }
-  </style>
-</head>
-<body>
-  <div class="topbar">Demo map — zoom & pan works. No data yet.</div>
-  <div id="map"></div>
+// 1. Get the file URL from query parameter
+const urlParams = new URLSearchParams(window.location.search);
+const geojsonFileURL = urlParams.get('https://godrejinds-my.sharepoint.com/:x:/r/personal/aditya_vn_godrejproperties_com/Documents/dealdata.geojson'); 
+// Example: 'https://godrejinds-my.sharepoint.com/:x:/r/personal/aditya_vn_godrejproperties_com/Documents/dealdata.geojson'
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script>
-    // default center + zoom (India)
-    const defaultCenter = [20.5937, 78.9629];
-    const defaultZoom = 5;
+// 2. Initialize map
+const map = L.map('map').setView([20.5937, 78.9629], 5); // Center on India
 
-    const map = L.map('map', { zoomControl: true }).setView(defaultCenter, defaultZoom);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+}).addTo(map);
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
-      maxZoom: 19
-    }).addTo(map);
+// 3. Fetch geojson and plot pins
+fetch(geojsonFileURL, { credentials: 'include' })
+    .then(response => response.json())
+    .then(data => {
+        const geoLayer = L.geoJSON(data, {
+            pointToLayer: function(feature, latlng) {
+                let color = feature.properties.Status === "Active" ? "green" :
+                            feature.properties.Status === "On Hold" ? "orange" :
+                            "red";
+                return L.circleMarker(latlng, { color: color, radius: 8 });
+            },
+            onEachFeature: function(feature, layer) {
+                layer.bindPopup(
+                    `<b>Lead:</b> ${feature.properties.LeadName}<br>
+                     <b>Owner:</b> ${feature.properties.PrimaryOwner}<br>
+                     <b>Status:</b> ${feature.properties.Status}<br>
+                     <b>Stage:</b> ${feature.properties.Stage}<br>
+                     <b>City:</b> ${feature.properties.City}<br>
+                     <b>Site:</b> ${feature.properties.SiteLocation}`
+                );
+            }
+        }).addTo(map);
 
-    // small demo marker to show interaction (optional)
-    const demoMarker = L.marker([19.0760,72.8777]).addTo(map);
-    demoMarker.bindPopup('<b>Demo marker</b><br>Mumbai (no live data)').openPopup();
-
-    // let users zoom/pan normally - nothing else required
-  </script>
-</body>
-</html>
+        // Auto zoom to bounds
+        map.fitBounds(geoLayer.getBounds());
+    });
