@@ -4,76 +4,68 @@
   <meta charset="utf-8" />
   <title>Deal Map</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-  <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
-
   <style>
-    #map {
-      height: 100vh; /* full screen map */
-      width: 100%;
-    }
+    body, html { margin:0; padding:0; height:100%; }
+    #map { height:100vh; width:100%; }
+    .legend { background:white; padding:8px; border-radius:4px; box-shadow:0 1px 4px rgba(0,0,0,0.3); }
+    .legend .item { display:flex; gap:6px; align-items:center; margin:4px 0; }
+    .dot { width:12px; height:12px; border-radius:50%; display:inline-block; }
   </style>
 </head>
 <body>
   <div id="map"></div>
 
-  <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-
   <script>
-    // Get file parameter from URL
-    const urlParams = new URLSearchParams(window.location.search);
-    const geojsonFileURL = urlParams.get('file');
+    const map = L.map('map').setView([20.5937,78.9629],5);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18}).addTo(map);
 
-    // Init map centered on India
-    const map = L.map('map').setView([20.5937, 78.9629], 5);
+    // legend
+    const legend = L.control({position:'topright'});
+    legend.onAdd = function() {
+      const div = L.DomUtil.create('div','legend');
+      div.innerHTML = '<div style="font-weight:bold">Legend</div>' +
+        '<div class="item"><span class="dot" style="background:green"></span>Active</div>' +
+        '<div class="item"><span class="dot" style="background:orange"></span>On Hold</div>' +
+        '<div class="item"><span class="dot" style="background:red"></span>Dropped</div>';
+      return div;
+    };
+    legend.addTo(map);
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 18
-    }).addTo(map);
+    // Fetch geojson from same site (relative path)
+    fetch('dealdata.geojson')
+      .then(r => {
+        if(!r.ok) throw new Error('Fetch failed: ' + r.status);
+        return r.json();
+      })
+      .then(data => {
+        const geoLayer = L.geoJSON(data, {
+          pointToLayer: (feature, latlng) => {
+            const st = feature.properties?.Status || '';
+            const color = st === 'Active' ? 'green' : st === 'On Hold' ? 'orange' : 'red';
+            return L.circleMarker(latlng, { radius:7, color:color, fillOpacity:0.9 });
+          },
+          onEachFeature: (feature, layer) => {
+            const p = feature.properties || {};
+            const popup = `<b>Lead:</b> ${p.LeadName||''}<br>
+                           <b>Owner:</b> ${p.PrimaryOwner||''}<br>
+                           <b>Status:</b> ${p.Status||''}<br>
+                           <b>Stage:</b> ${p.Stage||''}<br>
+                           <b>City:</b> ${p.City||''}<br>
+                           <b>Site:</b> ${p.SiteLocation||''}`;
+            layer.bindPopup(popup);
+          }
+        }).addTo(map);
 
-    if (!geojsonFileURL) {
-      alert("No GeoJSON file URL provided.");
-    } else {
-      fetch(geojsonFileURL, { credentials: 'include' })
-        .then(r => {
-          if (!r.ok) throw new Error("Failed to fetch GeoJSON: " + r.statusText);
-          return r.json();
-        })
-        .then(data => {
-          const geoLayer = L.geoJSON(data, {
-            pointToLayer: function (feature, latlng) {
-              let color =
-                feature.properties.Status === "Active" ? "green" :
-                feature.properties.Status === "On Hold" ? "orange" :
-                "red";
-              return L.circleMarker(latlng, {
-                color: color,
-                radius: 8,
-                fillOpacity: 0.8
-              });
-            },
-            onEachFeature: function (feature, layer) {
-              const props = feature.properties || {};
-              layer.bindPopup(
-                `<b>Lead:</b> ${props.LeadName || ""}<br>
-                 <b>Owner:</b> ${props.PrimaryOwner || ""}<br>
-                 <b>Status:</b> ${props.Status || ""}<br>
-                 <b>Stage:</b> ${props.Stage || ""}<br>
-                 <b>City:</b> ${props.City || ""}<br>
-                 <b>Site:</b> ${props.SiteLocation || ""}`
-              );
-            }
-          }).addTo(map);
-
-          map.fitBounds(geoLayer.getBounds());
-        })
-        .catch(err => {
-          console.error(err);
-          alert("Error loading GeoJSON: " + err.message);
-        });
-    }
+        if(geoLayer.getBounds && geoLayer.getBounds().isValid()){
+          map.fitBounds(geoLayer.getBounds(), { padding: [20,20] });
+        }
+      })
+      .catch(err => {
+        console.error(err);
+        alert('Could not load dealdata.geojson: ' + err.message);
+      });
   </script>
 </body>
 </html>
