@@ -64,7 +64,7 @@
     const params = new URLSearchParams(window.location.search);
     const geoUrl = params.get('file') || 'dealdata.geojson';
 
-    fetch(geoUrl + '?t=' + new Date().getTime())
+    fetch(geoUrl + '?t=' + Date.now())
       .then(r => {
         if(!r.ok) throw new Error('Fetch failed: ' + r.status + ' ' + r.statusText);
         return r.json();
@@ -106,4 +106,5 @@
   </script>
 </body>
 </html>
+
 
