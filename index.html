@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Deal Map Demo (No Data)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    html,body,#map { height:100%; margin:0; padding:0; }
+    .topbar { position:absolute; left:10px; top:10px; z-index:1000; background:#fff; padding:6px 8px; border-radius:6px; box-shadow:0 1px 4px rgba(0,0,0,0.2); font-family:Arial,Helvetica,sans-serif; }
+  </style>
+</head>
+<body>
+  <div class="topbar">Demo map — zoom & pan works. No data yet.</div>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    // default center + zoom (India)
+    const defaultCenter = [20.5937, 78.9629];
+    const defaultZoom = 5;
+
+    const map = L.map('map', { zoomControl: true }).setView(defaultCenter, defaultZoom);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 19
+    }).addTo(map);
+
+    // small demo marker to show interaction (optional)
+    const demoMarker = L.marker([19.0760,72.8777]).addTo(map);
+    demoMarker.bindPopup('<b>Demo marker</b><br>Mumbai (no live data)').openPopup();
+
+    // let users zoom/pan normally - nothing else required
+  </script>
+</body>
+</html>
