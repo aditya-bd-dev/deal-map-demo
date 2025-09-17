@@ -1,41 +1,79 @@
-// 1. Get the file URL from query parameter
-const urlParams = new URLSearchParams(window.location.search);
-const geojsonFileURL = urlParams.get('file'); 
-// Example: 'https://godrejinds-my.sharepoint.com/:x:/r/personal/aditya_vn_godrejproperties_com/Documents/dealdata.geojson'
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Deal Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-// 2. Initialize map
-const map = L.map('map').setView([20.5937, 78.9629], 5); // Center on India
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 18,
-}).addTo(map);
+  <style>
+    #map {
+      height: 100vh; /* full screen map */
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
 
-// 3. Fetch geojson and plot pins
-fetch(geojsonFileURL, { credentials: 'include' })
-    .then(response => response.json())
-    .then(data => {
-        const geoLayer = L.geoJSON(data, {
-            pointToLayer: function(feature, latlng) {
-                let color = feature.properties.Status === "Active" ? "green" :
-                            feature.properties.Status === "On Hold" ? "orange" :
-                            "red";
-                return L.circleMarker(latlng, { color: color, radius: 8 });
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <script>
+    // Get file parameter from URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const geojsonFileURL = urlParams.get('file');
+
+    // Init map centered on India
+    const map = L.map('map').setView([20.5937, 78.9629], 5);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18
+    }).addTo(map);
+
+    if (!geojsonFileURL) {
+      alert("No GeoJSON file URL provided.");
+    } else {
+      fetch(geojsonFileURL, { credentials: 'include' })
+        .then(r => {
+          if (!r.ok) throw new Error("Failed to fetch GeoJSON: " + r.statusText);
+          return r.json();
+        })
+        .then(data => {
+          const geoLayer = L.geoJSON(data, {
+            pointToLayer: function (feature, latlng) {
+              let color =
+                feature.properties.Status === "Active" ? "green" :
+                feature.properties.Status === "On Hold" ? "orange" :
+                "red";
+              return L.circleMarker(latlng, {
+                color: color,
+                radius: 8,
+                fillOpacity: 0.8
+              });
             },
-            onEachFeature: function(feature, layer) {
-                layer.bindPopup(
-                    `<b>Lead:</b> ${feature.properties.LeadName}<br>
-                     <b>Owner:</b> ${feature.properties.PrimaryOwner}<br>
-                     <b>Status:</b> ${feature.properties.Status}<br>
-                     <b>Stage:</b> ${feature.properties.Stage}<br>
-                     <b>City:</b> ${feature.properties.City}<br>
-                     <b>Site:</b> ${feature.properties.SiteLocation}`
-                );
+            onEachFeature: function (feature, layer) {
+              const props = feature.properties || {};
+              layer.bindPopup(
+                `<b>Lead:</b> ${props.LeadName || ""}<br>
+                 <b>Owner:</b> ${props.PrimaryOwner || ""}<br>
+                 <b>Status:</b> ${props.Status || ""}<br>
+                 <b>Stage:</b> ${props.Stage || ""}<br>
+                 <b>City:</b> ${props.City || ""}<br>
+                 <b>Site:</b> ${props.SiteLocation || ""}`
+              );
             }
-        }).addTo(map);
+          }).addTo(map);
 
-        // Auto zoom to bounds
-        map.fitBounds(geoLayer.getBounds());
-    });
-
-
-
+          map.fitBounds(geoLayer.getBounds());
+        })
+        .catch(err => {
+          console.error(err);
+          alert("Error loading GeoJSON: " + err.message);
+        });
+    }
+  </script>
+</body>
+</html>
