@@ -85,7 +85,9 @@
 
     function fetchGeojson() {
       showLoading('Loading deal data...');
-      const urls = buildUrls(fileParam);
+      const urls = {relative: (fileParam || DEFAULT_FILE) + '?t=' + Date.now(),
+                    raw: 'https://raw.githubusercontent.com/' + OWNER + '/' + REPO + '/main/' + (fileParam || DEFAULT_FILE) + '?t=' + Date.now()
+                   };
       // First try Pages-relative URL (same origin) with no-store
       fetch(urls.relative, { cache: 'no-store' })
         .then(r => {
@@ -154,3 +156,4 @@
   </script>
 </body>
 </html>
+
