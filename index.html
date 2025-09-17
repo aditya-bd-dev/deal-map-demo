@@ -1,6 +1,6 @@
 // 1. Get the file URL from query parameter
 const urlParams = new URLSearchParams(window.location.search);
-const geojsonFileURL = urlParams.get('https://godrejinds-my.sharepoint.com/:x:/r/personal/aditya_vn_godrejproperties_com/Documents/Documents/dealdata.geojson'); 
+const geojsonFileURL = urlParams.get('https://godrejinds-my.sharepoint.com/:x:/r/personal/aditya_vn_godrejproperties_com/Documents/dealdata.geojson'); 
 // Example: 'https://godrejinds-my.sharepoint.com/:x:/r/personal/aditya_vn_godrejproperties_com/Documents/dealdata.geojson'
 
 // 2. Initialize map
@@ -36,4 +36,5 @@ fetch(geojsonFileURL, { credentials: 'include' })
         // Auto zoom to bounds
         map.fitBounds(geoLayer.getBounds());
     });
+
 
