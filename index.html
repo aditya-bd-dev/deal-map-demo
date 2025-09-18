@@ -29,7 +29,7 @@
       font-family:Arial, sans-serif;
       font-size:13px;
       box-shadow:0 1px 4px rgba(0,0,0,.25);
-      max-height:260px;
+      max-height:320px;
       overflow-y:auto;
     }
     .filter-box b { display:block; margin-top:6px; }
@@ -70,22 +70,23 @@
     const map = L.map('map').setView([20.5937,78.9629],5);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
 
-    // Filter control
+    // Build and add filter control (checkboxes start UNCHECKED)
     const filterControl = L.control({ position:'topright' });
     filterControl.onAdd = function() {
       const div = L.DomUtil.create('div','filter-box');
       div.innerHTML = `
         <b>Status</b>
-        <label><input type="checkbox" class="status-filter" value="Active" checked> Active</label>
-        <label><input type="checkbox" class="status-filter" value="On Hold" checked> On Hold</label>
-        <label><input type="checkbox" class="status-filter" value="Dropped" checked> Dropped</label>
+        <label><input type="checkbox" class="status-filter" value="Active"> Active</label>
+        <label><input type="checkbox" class="status-filter" value="On Hold"> On Hold</label>
+        <label><input type="checkbox" class="status-filter" value="Dropped"> Dropped</label>
+
         <b>Stage</b>
-        <label><input type="checkbox" class="stage-filter" value="Qualified Lead" checked> Qualified Lead</label>
-        <label><input type="checkbox" class="stage-filter" value="Site Visit" checked> Site Visit</label>
-        <label><input type="checkbox" class="stage-filter" value="Prelim Offer" checked> Prelim Offer</label>
-        <label><input type="checkbox" class="stage-filter" value="Advance Offer" checked> Advance Offer</label>
-        <label><input type="checkbox" class="stage-filter" value="Final Offer" checked> Final Offer</label>
-        <label><input type="checkbox" class="stage-filter" value="Term Sheet" checked> Term Sheet</label>
+        <label><input type="checkbox" class="stage-filter" value="Qualified Lead"> Qualified Lead</label>
+        <label><input type="checkbox" class="stage-filter" value="Site Visit"> Site Visit</label>
+        <label><input type="checkbox" class="stage-filter" value="Prelim Offer"> Prelim Offer</label>
+        <label><input type="checkbox" class="stage-filter" value="Advance Offer"> Advance Offer</label>
+        <label><input type="checkbox" class="stage-filter" value="Final Offer"> Final Offer</label>
+        <label><input type="checkbox" class="stage-filter" value="Term Sheet"> Term Sheet</label>
       `;
       return div;
     };
@@ -99,6 +100,9 @@
     let allData = null;
     let dealLayer = null;
 
+    // Filtering behavior:
+    // - If NO checkboxes checked (both status AND stage arrays empty) => show ALL deals.
+    // - If any checkbox checked (status or stage), show deals that match ANY checked status OR ANY checked stage (union).
     function updateLayer() {
       if (!allData) return;
       if (dealLayer) { map.removeLayer(dealLayer); }
@@ -106,11 +110,20 @@
       const statusChecked = Array.from(document.querySelectorAll('.status-filter:checked')).map(cb => cb.value);
       const stageChecked = Array.from(document.querySelectorAll('.stage-filter:checked')).map(cb => cb.value);
 
+      const anyFilterChecked = (statusChecked.length > 0) || (stageChecked.length > 0);
+
       dealLayer = L.geoJSON(allData, {
         filter: (feature) => {
-          const s = feature.properties.Status || '';
-          const st = feature.properties.Stage || '';
-          return statusChecked.includes(s) && stageChecked.includes(st);
+          if (!anyFilterChecked) return true; // no filters selected -> show everything
+
+          const s = (feature.properties && feature.properties.Status) || '';
+          const st = (feature.properties && feature.properties.Stage) || '';
+
+          // show if matches any selected status OR any selected stage
+          const matchStatus = statusChecked.length > 0 && statusChecked.includes(s);
+          const matchStage = stageChecked.length > 0 && stageChecked.includes(st);
+
+          return matchStatus || matchStage;
         },
         pointToLayer: (f,latlng) => {
           const s = (f.properties && f.properties.Status) || '';
@@ -118,13 +131,16 @@
         },
         onEachFeature: (f,layer) => {
           const p = f.properties||{};
-          const html = '<b>Lead:</b> '+(p.LeadName||'')+
-                       '<br/><b>Status:</b> '+(p.Status||'')+
-                       '<br/><b>Stage:</b> '+(p.Stage||'')+
-                       '<br/><b>Owner:</b> '+(p.PrimaryOwner||'')+
-                       '<br/><b>City:</b> '+(p.City||'')+
-                       '<br/><b>Site:</b> '+(p.SiteLocation||'')+
-                       '<br/><b>Comments:</b> '+(p.Comments||'');
+          const html = '<div style="font-family:Arial;font-size:13px">' +
+            '<b>Lead:</b> '+(p.LeadName||'')+'<br/>' +
+            '<b>Owner:</b> '+(p.PrimaryOwner||'')+'<br/>' +
+            '<b>DealID:</b> '+(p.DealID||'')+'<br/>' +
+            '<b>Status:</b> '+(p.Status||'')+'<br/>' +
+            '<b>Stage:</b> '+(p.Stage||'')+'<br/>' +
+            '<b>City:</b> '+(p.City||'')+'<br/>' +
+            '<b>Site:</b> '+(p.SiteLocation||'')+'<br/>' +
+            '<b>Comments:</b> '+(p.Comments||'') +
+            '</div>';
           layer.bindPopup(html);
         }
       }).addTo(map);
@@ -135,22 +151,32 @@
     }
 
     // Attach checkbox listeners
-    map.whenReady(() => {
-      document.querySelectorAll('.filter-box input').forEach(cb => {
+    function attachFilterListeners() {
+      const inputs = document.querySelectorAll('.filter-box input');
+      inputs.forEach(cb => {
         cb.onchange = updateLayer;
       });
-    });
+    }
 
-    // Fetch data
+    // Fetch data (from raw.githubusercontent to avoid Pages caching)
     const params = new URLSearchParams(window.location.search);
-    const fileParam = params.get('file');
+    const fileParam = params.get('file'); // optional filename passed by Power Apps flow (versioned), else default
     const fileName = fileParam || 'dealdata.geojson';
     const url = 'https://raw.githubusercontent.com/' + OWNER + '/' + REPO + '/' + BRANCH + '/' + fileName + '?t=' + Date.now();
 
     show('Fetching ' + fileName + ' ...');
     fetch(url, { cache:'no-store' })
       .then(r => { if(!r.ok) throw new Error(r.status+' '+r.statusText); return r.json(); })
-      .then(data => { hide(); allData = data; updateLayer(); })
+      .then(data => {
+        hide();
+        allData = data;
+        // ensure controls have listeners (DOM for control exists now)
+        // small timeout to let Leaflet attach control DOM
+        setTimeout(() => {
+          attachFilterListeners();
+          updateLayer(); // initial render (no checkboxes checked -> show all)
+        }, 50);
+      })
       .catch(err => { hide(); alert('Could not fetch '+fileName+': '+err.message); console.error(err); });
   </script>
 </body>
