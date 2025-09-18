@@ -9,10 +9,49 @@
   <style>
     html, body { height:100%; margin:0; padding:0; }
     #map { width:100%; height:100vh; }
-    .loading { position:absolute; left:12px; top:12px; z-index:1000; background:#fff; padding:6px 10px; border-radius:4px; font-family:Arial; font-size:13px; box-shadow:0 1px 3px rgba(0,0,0,.2); }
-    .legend { background:#fff; padding:8px; border-radius:6px; font-family:Arial; font-size:13px; box-shadow:0 1px 4px rgba(0,0,0,.25); }
-    .legend .item { display:flex; align-items:center; gap:6px; margin:4px 0; }
-    .legend .marker { width:18px; height:28px; background-size:contain; background-repeat:no-repeat; display:inline-block; }
+
+    .loading {
+      position:absolute;
+      left:12px; top:12px;
+      z-index:1000;
+      background:#fff;
+      padding:6px 10px;
+      border-radius:4px;
+      font-family:Arial;
+      font-size:13px;
+      box-shadow:0 1px 3px rgba(0,0,0,.2);
+    }
+
+    .legend, .filter-box {
+      background:#fff;
+      padding:8px 10px;
+      border-radius:6px;
+      font-family:Arial, sans-serif;
+      font-size:13px;
+      box-shadow:0 1px 4px rgba(0,0,0,.25);
+      margin-bottom:8px;
+    }
+
+    .legend .item {
+      display:flex;
+      align-items:center;
+      gap:6px;
+      margin:4px 0;
+    }
+
+    .legend .marker {
+      width:18px;
+      height:28px;
+      background-size:contain;
+      background-repeat:no-repeat;
+      display:inline-block;
+    }
+
+    .filter-box label {
+      display:block;
+      margin:3px 0;
+      cursor:pointer;
+    }
   </style>
 </head>
 <body>
@@ -25,22 +64,23 @@
     const REPO = 'deal-map-demo';
     const BRANCH = 'main';
 
+    // Marker icons
     const ICONS = {
       green: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png",
       orange: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-orange.png",
       red: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png",
       shadow: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png"
     };
-
     function createIcon(url){
       return L.icon({ iconUrl:url, iconSize:[25,41], iconAnchor:[12,41], popupAnchor:[1,-34], shadowUrl:ICONS.shadow, shadowSize:[41,41] });
     }
-
     const icons = { Active:createIcon(ICONS.green), "On Hold":createIcon(ICONS.orange), Dropped:createIcon(ICONS.red), default:createIcon(ICONS.red) };
 
+    // Map setup
     const map = L.map('map').setView([20.5937,78.9629],5);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
 
+    // Legend
     const legend = L.control({ position:'topright' });
     legend.onAdd = () => {
       const d = L.DomUtil.create('div','legend');
@@ -52,33 +92,80 @@
     };
     legend.addTo(map);
 
-    function show(msg){ document.getElementById('loading').innerText=msg; document.getElementById('loading').style.display='block'; }
-    function hide(){ document.getElementById('loading').style.display='none'; }
+    // Filter control
+    const filterControl = L.control({ position:'topright' });
+    filterControl.onAdd = function(map) {
+      const div = L.DomUtil.create('div', 'filter-box');
+      div.innerHTML = `
+        <b>Filter Deals</b><br/>
+        <label><input type="checkbox" value="Active" checked> Active</label>
+        <label><input type="checkbox" value="On Hold" checked> On Hold</label>
+        <label><input type="checkbox" value="Dropped" checked> Dropped</label>
+        <label><input type="checkbox" value="Qualified Lead" checked> Qualified Lead</label>
+        <label><input type="checkbox" value="Site Visit" checked> Site Visit</label>
+      `;
+      return div;
+    };
+    filterControl.addTo(map);
 
+    // Show/hide loading
+    function show(msg){ const e=document.getElementById('loading'); if(e){ e.innerText=msg; e.style.display='block'; } }
+    function hide(){ const e=document.getElementById('loading'); if(e) e.style.display='none'; }
+
+    // Data variables
+    let allData = null;
+    let dealLayer = null;
+
+    function updateLayer() {
+      if (!allData) return;
+      if (dealLayer) { map.removeLayer(dealLayer); }
+
+      const checked = Array.from(document.querySelectorAll('.filter-box input:checked')).map(cb => cb.value);
+
+      dealLayer = L.geoJSON(allData, {
+        filter: (feature) => {
+          const s = feature.properties.Status || feature.properties.Stage || '';
+          return checked.includes(s);
+        },
+        pointToLayer: (f,latlng) => {
+          const s = (f.properties && f.properties.Status) || '';
+          return L.marker(latlng,{ icon: icons[s]||icons.default });
+        },
+        onEachFeature: (f,layer) => {
+          const p = f.properties||{};
+          const html = '<b>Lead:</b> '+(p.LeadName||'')+
+                       '<br/><b>Status:</b> '+(p.Status||'')+
+                       '<br/><b>Stage:</b> '+(p.Stage||'')+
+                       '<br/><b>Owner:</b> '+(p.PrimaryOwner||'')+
+                       '<br/><b>City:</b> '+(p.City||'')+
+                       '<br/><b>Site:</b> '+(p.SiteLocation||'')+
+                       '<br/><b>Comments:</b> '+(p.Comments||'');
+          layer.bindPopup(html);
+        }
+      }).addTo(map);
+
+      if (dealLayer.getBounds && dealLayer.getBounds().isValid()) {
+        map.fitBounds(dealLayer.getBounds(), { padding:[20,20] });
+      }
+    }
+
+    // Attach checkbox listeners after map initializes
+    map.whenReady(() => {
+      document.querySelectorAll('.filter-box input').forEach(cb => {
+        cb.onchange = updateLayer;
+      });
+    });
+
+    // Fetch data
     const params = new URLSearchParams(window.location.search);
-    const fileParam = params.get('file'); // e.g. dealdata_202509181932.geojson
+    const fileParam = params.get('file');
     const fileName = fileParam || 'dealdata.geojson';
-
     const url = 'https://raw.githubusercontent.com/' + OWNER + '/' + REPO + '/' + BRANCH + '/' + fileName + '?t=' + Date.now();
 
     show('Fetching ' + fileName + ' ...');
     fetch(url, { cache:'no-store' })
       .then(r => { if(!r.ok) throw new Error(r.status+' '+r.statusText); return r.json(); })
-      .then(data => {
-        hide();
-        const layer = L.geoJSON(data, {
-          pointToLayer: (f,latlng) => {
-            const s = (f.properties && f.properties.Status) || '';
-            return L.marker(latlng,{ icon: icons[s]||icons.default });
-          },
-          onEachFeature: (f,layer) => {
-            const p = f.properties||{};
-            const html = '<b>Lead:</b> '+(p.LeadName||'')+'<br/><b>Owner:</b> '+(p.PrimaryOwner||'')+'<br/><b>Status:</b> '+(p.Status||'')+'<br/><b>Stage:</b> '+(p.Stage||'')+'<br/><b>City:</b> '+(p.City||'')+'<br/><b>Site:</b> '+(p.SiteLocation||'')+'<br/><b>Comments:</b> '+(p.Comments||'');
-            layer.bindPopup(html);
-          }
-        }).addTo(map);
-        if(layer.getBounds && layer.getBounds().isValid()){ map.fitBounds(layer.getBounds(),{padding:[20,20]}); }
-      })
+      .then(data => { hide(); allData = data; updateLayer(); })
       .catch(err => { hide(); alert('Could not fetch '+fileName+': '+err.message); console.error(err); });
   </script>
 </body>
