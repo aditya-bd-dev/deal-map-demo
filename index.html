@@ -1,24 +1,37 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <title>Deal Map</title>
+  <meta charset="utf-8" />
+  <title>Deal Map Viewer</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
-    html,body{height:100%;margin:0;padding:0;font-family:Arial, Helvetica, sans-serif}
+    html,body{height:100%;margin:0;padding:0}
     #map{width:100%;height:100vh}
-    .loading{position:absolute;left:12px;top:12px;z-index:1000;background:#fff;padding:8px 12px;border-radius:6px;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.12)}
-    .filter-box{position:absolute;right:12px;top:12px;z-index:1000;background:#fff;padding:10px;border-radius:8px;font-size:13px;box-shadow:0 2px 12px rgba(0,0,0,.14);max-height:72vh;overflow:auto;width:240px}
+    .loading{
+      position:absolute;left:12px;top:12px;z-index:1000;
+      background:#fff;padding:8px 10px;border-radius:6px;
+      font-family:Arial,Helvetica,sans-serif;font-size:13px;
+      box-shadow:0 2px 8px rgba(0,0,0,.18)
+    }
+    .filter-box{
+      position:absolute;right:12px;top:12px;z-index:1000;
+      background:#fff;padding:10px;border-radius:8px;
+      font-family:Arial,Helvetica,sans-serif;font-size:13px;
+      box-shadow:0 2px 12px rgba(0,0,0,.2);max-height:70vh;
+      overflow:auto;width:260px;
+    }
     .filter-box b{display:block;margin-top:6px}
     .filter-box label{display:block;margin:6px 0;cursor:pointer}
-    .muted{font-size:12px;color:#666;margin-top:8px}
-    .error{color:#a00;font-weight:600}
+    .hint{font-size:11px;color:#666;margin-top:8px}
+    @media (max-width:640px){
+      .filter-box{right:8px;left:8px;width:auto}
+    }
   </style>
 </head>
 <body>
   <div id="map"></div>
-
   <div id="loading" class="loading">Preparing map…</div>
 
   <div id="filters" class="filter-box" aria-hidden="false">
@@ -35,170 +48,243 @@
     <label><input type="checkbox" class="stage-filter" value="Final Offer"> Final Offer</label>
     <label><input type="checkbox" class="stage-filter" value="Term Sheet"> Term Sheet</label>
 
-    <div class="muted">Tip: all boxes start <strong>unchecked</strong> and map initially shows all deals. Check boxes to filter.</div>
-    <div id="statusMsg" class="muted"></div>
+    <div class="hint">Initial state: all boxes are <b>unchecked</b> and the map shows <b>all deals</b>. Tick boxes to filter (checks act as a union).</div>
   </div>
 
+  <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
-    // ---------- CONFIG ----------
-    const ICONS = {
-      green: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png",
-      orange: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-orange.png",
-      red: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png",
-      shadow: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png"
-    };
+  // ------------- CONFIG -------------
+  // If you want the viewer to fetch a file from your private GitHub repo by filename,
+  // set RAW_BASE to your raw.githubusercontent root for the repo. Note: raw.githubusercontent
+  // will return 404 for private repos when fetched from the browser. This file supports
+  // three input methods (priority order): data= (URI-encoded JSON text), geo= (external URL or SAS),
+  // file= (filename — will be tried via raw.githubusercontent).
+  const RAW_BASE = 'https://raw.githubusercontent.com/aditya-bd-dev/priv-data/main/'; // returns raw file content for public repo
+  const DEFAULT_CENTER = [20.5937,78.9629];
+  const DEFAULT_ZOOM = 5;
+  // ------------------------------------
 
-    function makeIcon(url){ return L.icon({ iconUrl: url, iconSize: [25,41], iconAnchor: [12,41], popupAnchor: [1,-34], shadowUrl: ICONS.shadow, shadowSize: [41,41] }); }
-    const ICON_MAP = { Active: makeIcon(ICONS.green), "On Hold": makeIcon(ICONS.orange), Dropped: makeIcon(ICONS.red), default: makeIcon(ICONS.red) };
-    // ----------------------------
+  // marker icons (colored pin images)
+  const ICONS = {
+    green: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png",
+    orange: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-orange.png",
+    red: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png",
+    blue: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png",
+    shadow: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png"
+  };
+  function makeIcon(url){ return L.icon({ iconUrl:url, iconSize:[25,41], iconAnchor:[12,41], popupAnchor:[1,-34], shadowUrl:ICONS.shadow, shadowSize:[41,41] }); }
+  const ICON_MAP = { Active: makeIcon(ICONS.green), "On Hold": makeIcon(ICONS.orange), Dropped: makeIcon(ICONS.red) };
 
-    const map = L.map('map').setView([20.5937,78.9629], 5);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+  // map init
+  const map = L.map('map', { zoomControl: true }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
 
-    const loadingEl = document.getElementById('loading');
-    const statusMsgEl = document.getElementById('statusMsg');
-    function showLoading(text){ loadingEl.style.display = 'block'; loadingEl.innerText = text || 'Loading...'; }
-    function hideLoading(){ loadingEl.style.display = 'none'; }
-    function setStatus(text, isError){ statusMsgEl.innerText = text || ''; statusMsgEl.className = isError ? 'error' : 'muted'; }
+  const loadingEl = document.getElementById('loading');
+  function show(msg){ loadingEl.style.display='block'; loadingEl.innerText = msg || 'Loading...'; }
+  function hide(){ loadingEl.style.display='none'; }
 
-    let allData = null;
-    let geoLayer = null;
+  // data holder
+  let allData = null;
+  let dealLayer = null;
 
-    // read params: prefer geo, fallback to file
-    const params = new URLSearchParams(window.location.search);
-    let geoParam = params.get('geo') || params.get('file') || null;
-    // If power automate encoded the URL twice, it will be percent-encoded; we decode here
-    if (geoParam) {
-      try { geoParam = decodeURIComponent(geoParam); } catch(e) { /* ignore */ }
-    }
+  // helpers: read params
+  const params = new URLSearchParams(window.location.search);
+  const dataParam = params.get('data');    // URI-encoded JSON text (preferred when Flow embeds JSON)
+  const geoParam  = params.get('geo');     // download URL, SAS, or org share link
+  const fileParam = params.get('file');    // bare filename -> try RAW_BASE + file
 
-    // fetch helper: handle viewer HTML vs JSON, credentials include for org links
-    async function fetchGeoJson(url) {
-      showLoading('Fetching deal data...');
-      setStatus('');
-      try {
-        // try fetch with credentials included (for org-scoped links)
-        const resp = await fetch(url, { cache: 'no-store', credentials: 'include' });
-        if (!resp.ok) {
-          throw new Error(resp.status + ' ' + resp.statusText);
-        }
-        const text = await resp.text();
-        // detect HTML viewer page (SharePoint viewer) - don't try to parse HTML
-        if (/^\s*<\s*html/i.test(text) || /<\s*div[^>]*id="?sp-/.test(text) ) {
-          // return helpful message
-          throw new Error('Received HTML (SharePoint viewer page) instead of raw GeoJSON. Ensure Flow returned a direct download URL (download.aspx) or that the user is signed in.');
-        }
-        // parse JSON
-        const json = JSON.parse(text);
-        return json;
-      } catch (err) {
-        throw err;
-      } finally {
-        hideLoading();
+  // attach filters: initial state = unchecked but show all deals when none checked
+  function attachFilters(){
+    const inputs = document.querySelectorAll('.filter-box input');
+    inputs.forEach(cb => { cb.checked = false; cb.onchange = updateLayer; });
+  }
+
+  // filter logic: when no checkbox checked -> show all. When any checked -> show features if status in statusChecked OR stage in stageChecked.
+  function updateLayer(){
+    if(!allData) return;
+    if(dealLayer){ try{ map.removeLayer(dealLayer); }catch(e){} dealLayer = null; }
+
+    const statusChecked = Array.from(document.querySelectorAll('.status-filter:checked')).map(i=>i.value);
+    const stageChecked = Array.from(document.querySelectorAll('.stage-filter:checked')).map(i=>i.value);
+    const anyChecked = statusChecked.length > 0 || stageChecked.length > 0;
+
+    dealLayer = L.geoJSON(allData, {
+      filter: function(feature){
+        if(!anyChecked) return true; // no checkboxes selected -> show all
+        const s = (feature.properties && feature.properties.Status) || '';
+        const st = (feature.properties && feature.properties.Stage) || '';
+        return (statusChecked.includes(s) || stageChecked.includes(st));
+      },
+      pointToLayer: function(feature, latlng){
+        const s = (feature.properties && feature.properties.Status) || '';
+        return L.marker(latlng, { icon: ICON_MAP[s] || makeIcon(ICONS.blue) });
+      },
+      onEachFeature: function(feature, layer){
+        const p = feature.properties || {};
+        const html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:13px">' +
+          '<b>Lead:</b> '+(p.LeadName||'')+'<br/>' +
+          '<b>DealID:</b> '+(p.DealID||'')+'<br/>' +
+          '<b>Primary Owner:</b> '+(p.PrimaryOwner||'')+'<br/>' +
+          '<b>Status:</b> '+(p.Status||'')+'<br/>' +
+          '<b>Stage:</b> '+(p.Stage||'')+'<br/>' +
+          '<b>City:</b> '+(p.City||'')+'<br/>' +
+          '<b>Land Extent:</b> '+(p['Land Extent']||p.Land_Extent||'')+'<br/>' +
+          '<b>Lead Received On:</b> '+(p.LeadReceivedOn||'')+'<br/>' +
+          '<b>Site Location:</b> '+(p.SiteLocation||'')+'<br/>' +
+          '<b>Comments:</b> '+(p.Comments||'') +
+          '</div>';
+        layer.bindPopup(html);
       }
-    }
+    }).addTo(map);
 
-    // filters wiring: ensure all checkboxes start unchecked but map shows all deals
-    function attachFilterHandlers() {
-      const inputs = document.querySelectorAll('.filter-box input');
-      inputs.forEach(i => {
-        try { i.checked = false; } catch(e) {}
-        i.onchange = updateLayer;
-      });
-    }
-
-    // update visible layer according to union of checked statuses/stages
-    function updateLayer() {
-      if (!allData) return;
-      if (geoLayer) { try { map.removeLayer(geoLayer); } catch(e) {} geoLayer = null; }
-
-      const statusChecked = Array.from(document.querySelectorAll('.status-filter:checked')).map(i=>i.value);
-      const stageChecked = Array.from(document.querySelectorAll('.stage-filter:checked')).map(i=>i.value);
-      const anyChecked = statusChecked.length > 0 || stageChecked.length > 0;
-
-      geoLayer = L.geoJSON(allData, {
-        filter: function(feature) {
-          if (!anyChecked) return true; // show all when nothing checked
-          const p = feature.properties || {};
-          const s = p.Status || '';
-          const st = p.Stage || '';
-          const matchStatus = statusChecked.length>0 && statusChecked.includes(s);
-          const matchStage = stageChecked.length>0 && stageChecked.includes(st);
-          return matchStatus || matchStage; // union
-        },
-        pointToLayer: function(feature, latlng) {
-          const p = feature.properties || {};
-          const s = p.Status || '';
-          return L.marker(latlng, { icon: ICON_MAP[s] || ICON_MAP.default });
-        },
-        onEachFeature: function(feature, layer) {
-          const p = feature.properties || {};
-          const html = '<div style="font-size:13px">' +
-            '<b>Lead:</b> ' + (p.LeadName||'') + '<br/>' +
-            '<b>DealID:</b> ' + (p.DealID||'') + '<br/>' +
-            '<b>Owner:</b> ' + (p.PrimaryOwner||'') + '<br/>' +
-            '<b>Status:</b> ' + (p.Status||'') + '<br/>' +
-            '<b>Stage:</b> ' + (p.Stage||'') + '<br/>' +
-            '<b>City:</b> ' + (p.City||'') + '<br/>' +
-            '<b>Land Extent:</b> ' + (p['Land Extent']||p.LandExtent||'') + '<br/>' +
-            '<b>LeadReceivedOn:</b> ' + (p.LeadReceivedOn||'') + '<br/>' +
-            '<b>Site:</b> ' + (p.SiteLocation||'') + '<br/>' +
-            '<b>Comments:</b> ' + (p.Comments||'') +
-            '</div>';
-          layer.bindPopup(html);
-        }
-      }).addTo(map);
-
-      // center/zoom nicely if there are points
-      try {
-        const bounds = geoLayer.getBounds();
-        if (bounds && bounds.isValid()) {
-          map.fitBounds(bounds, { padding: [30,30] });
-        }
-      } catch(e) { console.warn('fitBounds failed', e); }
-    }
-
-    // main startup
-    (async function init() {
-      attachFilterHandlers();
-      showLoading('Preparing map…');
-
-      // if geoParam provided, use it
-      if (geoParam) {
-        setStatus('Using geo/file parameter from URL');
-        try {
-          const data = await fetchGeoJson(geoParam);
-          allData = data;
-          setStatus('Loaded ' + (data.features ? data.features.length : 'unknown') + ' features');
-          updateLayer();
-          return;
-        } catch (err) {
-          console.error('fetchGeoJson failed for geoParam', err);
-          setStatus('Could not fetch deal data: ' + err.message, true);
-          alert('Could not fetch deal data: ' + err.message + '\n\nIf this is an org-scoped SharePoint URL, please ensure you are logged into SharePoint in this browser.');
-          return;
-        }
+    // try to fit bounds
+    try{
+      const b = dealLayer.getBounds();
+      if(b && b.isValid()){
+        map.fitBounds(b, { padding: [40,40], maxZoom: 16 });
       }
+    }catch(e){ /* ignore */ }
+  }
 
-      // fallback: try relative file name (if index.html and geojson are co-located)
-      const fallback = 'dealdata.geojson?t=' + Date.now();
-      setStatus('No geo param found; attempting fallback: ' + fallback);
-      try {
-        const data = await fetchGeoJson(fallback);
-        allData = data;
-        setStatus('Loaded ' + (data.features ? data.features.length : 'unknown') + ' features');
-        updateLayer();
+  // decode and parse functions
+  function decodeDataParamToText(s){
+    if(!s) return null;
+    try{ return decodeURIComponent(s); } catch(e){ return s; }
+  }
+
+  // fetch URL with robust checks
+  async function fetchUrlText(url, opts){
+    // opts may include credentials boolean
+    const fetchOpts = { cache: 'no-store' };
+    if(opts && opts.credentials) fetchOpts.credentials = 'include';
+    try{
+      const r = await fetch(url, fetchOpts);
+      // network failure returns TypeError -> catch below
+      if(!r.ok){
+        throw new Error('HTTP ' + r.status + ' ' + r.statusText);
+      }
+      const txt = await r.text();
+      // some endpoints return HTML viewer page instead of raw JSON
+      if(/<\s*html/i.test(txt)) {
+        // if looks like redirect to login or viewer HTML, throw with a helpful message
+        throw new Error('Received HTML instead of JSON. Possible auth/login or viewer page.');
+      }
+      return txt;
+    }catch(err){
+      throw err;
+    }
+  }
+
+  // loaders for each input method
+  async function loadFromDataParam(b64OrJson){
+    show('Loading embedded data...');
+    try{
+      // data param expected to be URI-encoded JSON text (not base64 in this flow)
+      const jsonText = decodeDataParamToText(b64OrJson);
+      const json = JSON.parse(jsonText);
+      allData = json;
+      attachFilters();
+      hide();
+      setTimeout(updateLayer, 50);
+    }catch(err){
+      hide();
+      console.error(err);
+      alert('Failed to parse embedded data: ' + (err.message||err));
+    }
+  }
+
+  async function loadFromGeoParam(url){
+    show('Fetching data from provided URL...');
+    try{
+      // try with credentials first (for org-scoped links)
+      try{
+        const txt = await fetchUrlText(decodeURIComponent(url), { credentials: true });
+        allData = JSON.parse(txt);
+        attachFilters();
+        hide();
+        setTimeout(updateLayer, 50);
         return;
-      } catch (err) {
-        console.error('fallback fetch failed', err);
-        setStatus('Could not fetch dealdata.geojson. Provide the geo parameter in the URL pointing to a SharePoint download URL.', true);
-        alert('Could not fetch dealdata.geojson. Provide the geo parameter in the URL pointing to a SharePoint download URL.\n\nDetails: ' + err.message);
+      }catch(errCred){
+        // If credentials attempt failed, try without credentials (SAS/public link)
+        console.warn('Fetch with credentials failed:', errCred);
+        const txt2 = await fetchUrlText(decodeURIComponent(url), { credentials: false });
+        allData = JSON.parse(txt2);
+        attachFilters();
+        hide();
+        setTimeout(updateLayer, 50);
+        return;
       }
-    })();
+    }catch(err){
+      hide();
+      console.error(err);
+      alert('Could not fetch deal data from provided URL: ' + err.message + '\nIf this is an org-scoped link, ensure you are signed in to SharePoint in this browser tab.');
+    }
+  }
 
-    // debug helper (optional)
-    window.__refresh = function() { location.reload(); };
+  async function loadFromFileParam(filename){
+    if(!filename){
+      alert('Missing file parameter.');
+      return;
+    }
+    show('Fetching file from GitHub raw URL...');
+    const candidate = RAW_BASE + filename;
+    try{
+      const txt = await fetchUrlText(candidate, { credentials: false });
+      allData = JSON.parse(txt);
+      attachFilters();
+      hide();
+      setTimeout(updateLayer, 50);
+      return;
+    }catch(err){
+      hide();
+      console.error('raw.githubusercontent fetch failed:', err);
+      alert('Could not fetch file from raw.githubusercontent. If your priv-data repo is private, raw.githubusercontent will not serve the file publicly. Consider returning data inline (data=) or using a SAS URL or proxy.');
+    }
+  }
+
+  // main initialization
+  (function init(){
+    show('Preparing map...');
+    // priority: data (URI-encoded JSON), geo (URL), file (filename -> raw.githubusercontent attempt)
+    if(dataParam){
+      loadFromDataParam(dataParam).catch(e=>{
+        console.error(e);
+      });
+      return;
+    }
+    if(geoParam){
+      loadFromGeoParam(geoParam).catch(e=>{
+        console.error(e);
+      });
+      return;
+    }
+    if(fileParam){
+      loadFromFileParam(fileParam).catch(e=>{
+        console.error(e);
+      });
+      return;
+    }
+    // fallback: try to fetch dealdata.geojson in same folder (useful if you publish both files together)
+    const fallback = 'dealdata.geojson?t=' + Date.now();
+    show('Attempting fallback fetch...');
+    fetchUrlText(fallback, { credentials:false }).then(txt=>{
+      try{
+        allData = JSON.parse(txt);
+        attachFilters();
+        hide();
+        setTimeout(updateLayer, 50);
+      }catch(e){
+        hide();
+        alert('No data provided and fallback file not found. Launch the viewer with ?data=<URI-encoded JSON> or ?geo=<download URL> or ?file=<filename>.');
+      }
+    }).catch(err=>{
+      hide();
+      console.warn('Fallback fetch failed', err);
+      alert('No data provided. Launch the viewer with ?data=<URI-encoded JSON> or ?geo=<download URL> or ?file=<filename>.');
+    });
+  })();
+
   </script>
 </body>
 </html>
