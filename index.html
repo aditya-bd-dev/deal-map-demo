@@ -55,17 +55,11 @@
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
   // ------------- CONFIG -------------
-  // If you want the viewer to fetch a file from your private GitHub repo by filename,
-  // set RAW_BASE to your raw.githubusercontent root for the repo. Note: raw.githubusercontent
-  // will return 404 for private repos when fetched from the browser. This file supports
-  // three input methods (priority order): data= (URI-encoded JSON text), geo= (external URL or SAS),
-  // file= (filename — will be tried via raw.githubusercontent).
-  const RAW_BASE = 'https://raw.githubusercontent.com/aditya-bd-dev/priv-data/main/'; // returns raw file content for public repo
+  const RAW_BASE = 'https://raw.githubusercontent.com/aditya-bd-dev/priv-data/main/';
   const DEFAULT_CENTER = [20.5937,78.9629];
   const DEFAULT_ZOOM = 5;
   // ------------------------------------
 
-  // marker icons (colored pin images)
   const ICONS = {
     green: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png",
     orange: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-orange.png",
@@ -76,7 +70,6 @@
   function makeIcon(url){ return L.icon({ iconUrl:url, iconSize:[25,41], iconAnchor:[12,41], popupAnchor:[1,-34], shadowUrl:ICONS.shadow, shadowSize:[41,41] }); }
   const ICON_MAP = { Active: makeIcon(ICONS.green), "On Hold": makeIcon(ICONS.orange), Dropped: makeIcon(ICONS.red) };
 
-  // map init
   const map = L.map('map', { zoomControl: true }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
 
@@ -84,23 +77,19 @@
   function show(msg){ loadingEl.style.display='block'; loadingEl.innerText = msg || 'Loading...'; }
   function hide(){ loadingEl.style.display='none'; }
 
-  // data holder
   let allData = null;
   let dealLayer = null;
 
-  // helpers: read params
   const params = new URLSearchParams(window.location.search);
-  const dataParam = params.get('data');    // URI-encoded JSON text (preferred when Flow embeds JSON)
-  const geoParam  = params.get('geo');     // download URL, SAS, or org share link
-  const fileParam = params.get('file');    // bare filename -> try RAW_BASE + file
+  const dataParam = params.get('data');
+  const geoParam  = params.get('geo');
+  const fileParam = params.get('file');
 
-  // attach filters: initial state = unchecked but show all deals when none checked
   function attachFilters(){
     const inputs = document.querySelectorAll('.filter-box input');
     inputs.forEach(cb => { cb.checked = false; cb.onchange = updateLayer; });
   }
 
-  // filter logic: when no checkbox checked -> show all. When any checked -> show features if status in statusChecked OR stage in stageChecked.
   function updateLayer(){
     if(!allData) return;
     if(dealLayer){ try{ map.removeLayer(dealLayer); }catch(e){} dealLayer = null; }
@@ -111,7 +100,7 @@
 
     dealLayer = L.geoJSON(allData, {
       filter: function(feature){
-        if(!anyChecked) return true; // no checkboxes selected -> show all
+        if(!anyChecked) return true;
         const s = (feature.properties && feature.properties.Status) || '';
         const st = (feature.properties && feature.properties.Stage) || '';
         return (statusChecked.includes(s) || stageChecked.includes(st));
@@ -138,51 +127,65 @@
       }
     }).addTo(map);
 
-    // try to fit bounds
     try{
       const b = dealLayer.getBounds();
       if(b && b.isValid()){
         map.fitBounds(b, { padding: [40,40], maxZoom: 16 });
       }
-    }catch(e){ /* ignore */ }
+    }catch(e){}
   }
 
-  // decode and parse functions
   function decodeDataParamToText(s){
     if(!s) return null;
     try{ return decodeURIComponent(s); } catch(e){ return s; }
   }
 
-  // fetch URL with robust checks
   async function fetchUrlText(url, opts){
-    // opts may include credentials boolean
     const fetchOpts = { cache: 'no-store' };
     if(opts && opts.credentials) fetchOpts.credentials = 'include';
     try{
       const r = await fetch(url, fetchOpts);
-      // network failure returns TypeError -> catch below
-      if(!r.ok){
-        throw new Error('HTTP ' + r.status + ' ' + r.statusText);
-      }
+      if(!r.ok) throw new Error('HTTP ' + r.status + ' ' + r.statusText);
       const txt = await r.text();
-      // some endpoints return HTML viewer page instead of raw JSON
-      if(/<\s*html/i.test(txt)) {
-        // if looks like redirect to login or viewer HTML, throw with a helpful message
-        throw new Error('Received HTML instead of JSON. Possible auth/login or viewer page.');
-      }
+      if(/<\s*html/i.test(txt)) throw new Error('Received HTML instead of JSON. Possible auth/login or viewer page.');
       return txt;
-    }catch(err){
-      throw err;
+    }catch(err){ throw err; }
+  }
+
+  // robust base64->utf8 decoder (works for unicode content)
+  function base64DecodeUnicode(b64){
+    try{
+      return decodeURIComponent(Array.prototype.map.call(atob(b64), function(c){
+        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+      }).join(''));
+    }catch(e){
+      // fallback to atob (may break with non-ascii)
+      return atob(b64);
     }
   }
 
-  // loaders for each input method
   async function loadFromDataParam(b64OrJson){
     show('Loading embedded data...');
     try{
-      // data param expected to be URI-encoded JSON text (not base64 in this flow)
-      const jsonText = decodeDataParamToText(b64OrJson);
-      const json = JSON.parse(jsonText);
+      let txt = decodeDataParamToText(b64OrJson);
+      // if it looks like a data: URL with base64
+      if(/^data:application\/json;base64,/.test(txt)){
+        txt = txt.replace(/^data:application\/json;base64,/, '');
+        txt = base64DecodeUnicode(txt);
+      } else {
+        // If the decoded text doesn't start with { or [, try base64 decode (some flows may pass base64 directly)
+        const trimmed = (txt||'').trim();
+        if(trimmed && !trimmed.startsWith('{') && !trimmed.startsWith('[')){
+          try {
+            const decoded = base64DecodeUnicode(trimmed);
+            // if decode looks like JSON, use it
+            if(decoded.trim().startsWith('{') || decoded.trim().startsWith('[')) txt = decoded;
+          } catch(e){
+            // keep txt as-is
+          }
+        }
+      }
+      const json = JSON.parse(txt);
       allData = json;
       attachFilters();
       hide();
@@ -197,7 +200,6 @@
   async function loadFromGeoParam(url){
     show('Fetching data from provided URL...');
     try{
-      // try with credentials first (for org-scoped links)
       try{
         const txt = await fetchUrlText(decodeURIComponent(url), { credentials: true });
         allData = JSON.parse(txt);
@@ -206,7 +208,6 @@
         setTimeout(updateLayer, 50);
         return;
       }catch(errCred){
-        // If credentials attempt failed, try without credentials (SAS/public link)
         console.warn('Fetch with credentials failed:', errCred);
         const txt2 = await fetchUrlText(decodeURIComponent(url), { credentials: false });
         allData = JSON.parse(txt2);
@@ -223,10 +224,7 @@
   }
 
   async function loadFromFileParam(filename){
-    if(!filename){
-      alert('Missing file parameter.');
-      return;
-    }
+    if(!filename){ alert('Missing file parameter.'); return; }
     show('Fetching file from GitHub raw URL...');
     const candidate = RAW_BASE + filename;
     try{
@@ -243,29 +241,20 @@
     }
   }
 
-  // main initialization
   (function init(){
     show('Preparing map...');
-    // priority: data (URI-encoded JSON), geo (URL), file (filename -> raw.githubusercontent attempt)
     if(dataParam){
-      loadFromDataParam(dataParam).catch(e=>{
-        console.error(e);
-      });
+      loadFromDataParam(dataParam).catch(e=>{ console.error(e); });
       return;
     }
     if(geoParam){
-      loadFromGeoParam(geoParam).catch(e=>{
-        console.error(e);
-      });
+      loadFromGeoParam(geoParam).catch(e=>{ console.error(e); });
       return;
     }
     if(fileParam){
-      loadFromFileParam(fileParam).catch(e=>{
-        console.error(e);
-      });
+      loadFromFileParam(fileParam).catch(e=>{ console.error(e); });
       return;
     }
-    // fallback: try to fetch dealdata.geojson in same folder (useful if you publish both files together)
     const fallback = 'dealdata.geojson?t=' + Date.now();
     show('Attempting fallback fetch...');
     fetchUrlText(fallback, { credentials:false }).then(txt=>{
@@ -284,7 +273,6 @@
       alert('No data provided. Launch the viewer with ?data=<URI-encoded JSON> or ?geo=<download URL> or ?file=<filename>.');
     });
   })();
-
   </script>
 </body>
 </html>
