@@ -8,20 +8,18 @@
   <style>
     html,body{height:100%;margin:0;padding:0}
     #map{width:100%;height:100vh}
-
     .loading{
       position:absolute;left:12px;top:12px;z-index:1000;
       background:#fff;padding:8px 10px;border-radius:6px;
       font-family:Arial,Helvetica,sans-serif;font-size:13px;
       box-shadow:0 2px 8px rgba(0,0,0,.18)
     }
-
     .filter-box{
       position:absolute;right:12px;top:12px;z-index:1000;
       background:#fff;padding:10px;border-radius:8px;
       font-family:Arial,Helvetica,sans-serif;font-size:13px;
       box-shadow:0 2px 12px rgba(0,0,0,.2);max-height:70vh;
-      overflow:auto;width:260px;transition:max-height 0.3s ease;
+      overflow:auto;width:260px;transition:max-height .3s ease;
     }
     .filter-box.collapsed{max-height:40px;overflow:hidden}
     .filter-toggle{
@@ -32,7 +30,7 @@
     .filter-box b{display:block;margin-top:6px}
     .filter-box label{display:block;margin:4px 0;cursor:pointer}
     .hint{font-size:11px;color:#666;margin-top:8px}
-    @media (max-width:640px){.filter-box{right:8px;left:8px;width:auto}}
+    @media(max-width:640px){.filter-box{right:8px;left:8px;width:auto}}
   </style>
 </head>
 <body>
@@ -53,60 +51,48 @@
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
   const RAW_BASE = 'https://raw.githubusercontent.com/aditya-bd-dev/priv-data/main/';
-  const DEFAULT_CENTER = [20.5937,78.9629];
-  const DEFAULT_ZOOM = 5;
+  const DEFAULT_CENTER=[20.5937,78.9629],DEFAULT_ZOOM=5;
 
-  const map = L.map('map').setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+  const map=L.map('map').setView(DEFAULT_CENTER,DEFAULT_ZOOM);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    {maxZoom:19, attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
-
+    {maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
   const loadingEl=document.getElementById('loading');
   function show(m){loadingEl.style.display='block';loadingEl.innerText=m||'Loading...';}
   function hide(){loadingEl.style.display='none';}
 
-  let allData=null, dealLayer=null;
+  let allData=null,dealLayer=null;
 
   // ---------- Color logic ----------
   function getStageColor(status,stage){
     const colors={
-      "Active":{
-        "Qualified Lead":"#A5D6A7","Site Visit":"#66BB6A","Prelim Offer":"#388E3C",
-        "Advance Offer":"#2E7D32","Final Offer":"#1B5E20","Term Sheet":"#009688"
-      },
-      "On Hold":{
-        "Qualified Lead":"#FFE082","Site Visit":"#FFD54F","Prelim Offer":"#FFCA28",
-        "Advance Offer":"#FFC107","Final Offer":"#FFB300","Term Sheet":"#FFA000"
-      },
-      "Dropped":{
-        "Qualified Lead":"#EF9A9A","Site Visit":"#E57373","Prelim Offer":"#EF5350",
-        "Advance Offer":"#F44336","Final Offer":"#D32F2F","Term Sheet":"#B71C1C"
-      }
+      "Active":{"Qualified Lead":"#A5D6A7","Site Visit":"#66BB6A","Prelim Offer":"#388E3C",
+        "Advance Offer":"#2E7D32","Final Offer":"#1B5E20","Term Sheet":"#009688"},
+      "On Hold":{"Qualified Lead":"#FFE082","Site Visit":"#FFD54F","Prelim Offer":"#FFCA28",
+        "Advance Offer":"#FFC107","Final Offer":"#FFB300","Term Sheet":"#FFA000"},
+      "Dropped":{"Qualified Lead":"#EF9A9A","Site Visit":"#E57373","Prelim Offer":"#EF5350",
+        "Advance Offer":"#F44336","Final Offer":"#D32F2F","Term Sheet":"#B71C1C"}
     };
-    return colors[status]?.[stage] || "#9E9E9E";
+    return colors[status]?.[stage]||"#9E9E9E";
   }
-
   function colorCircle(latlng,color){
-    return L.circleMarker(latlng,{radius:8,fillColor:color,color:"#333",weight:1,fillOpacity:0.9});
+    return L.circleMarker(latlng,{radius:8,fillColor:color,color:"#333",weight:1,fillOpacity:.9});
   }
 
-  // ---------- Filter building ----------
-  const filterSections={
-    Status:"statusFilters",Stage:"stageFilters",City:"cityFilters",PrimaryOwner:"ownerFilters"
-  };
+  // ---------- Filter sections ----------
+  const filterSections={Status:"statusFilters",Stage:"stageFilters",City:"cityFilters",PrimaryOwner:"ownerFilters"};
   function buildFilters(){
     for(const k in filterSections){
       const container=document.getElementById(filterSections[k]);
-      const values=[...new Set(allData.features.map(f=>f.properties?.[k]).filter(Boolean))].sort();
-      container.innerHTML=values.map(v=>`<label><input type="checkbox" class="${k}-filter" value="${v}"> ${v}</label>`).join('');
+      const vals=[...new Set(allData.features.map(f=>f.properties?.[k]).filter(Boolean))].sort();
+      container.innerHTML=vals.map(v=>`<label><input type="checkbox" class="${k}-filter" value="${v}"> ${v}</label>`).join('');
     }
     document.querySelectorAll('#filterContent input').forEach(cb=>cb.onchange=updateLayer);
   }
 
-  // ---------- Filtering logic ----------
+  // ---------- Filtering ----------
   function updateLayer(){
     if(!allData)return;
     if(dealLayer){map.removeLayer(dealLayer);dealLayer=null;}
-
     const filters={};
     for(const k in filterSections){
       filters[k]=Array.from(document.querySelectorAll(`.${k}-filter:checked`)).map(i=>i.value);
@@ -143,7 +129,6 @@
         layer.bindPopup(html);
       }
     }).addTo(map);
-
     try{
       const b=dealLayer.getBounds();
       if(b&&b.isValid()) map.fitBounds(b,{padding:[40,40],maxZoom:16});
@@ -154,27 +139,46 @@
   const params=new URLSearchParams(window.location.search);
   const dataParam=params.get('data'),geoParam=params.get('geo'),fileParam=params.get('file');
 
-  async function fetchUrlText(u){
-    const r=await fetch(u,{cache:'no-store'});
-    if(!r.ok)throw new Error(r.statusText);
-    return r.text();
-  }
+  async function fetchUrlText(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error(r.status);return r.text();}
+  function base64DecodeUnicode(b64){return decodeURIComponent(Array.prototype.map.call(atob(b64),c=>'%' + ('00'+c.charCodeAt(0).toString(16)).slice(-2)).join(''));}
 
-  async function loadFromFile(filename){
-    show('Fetching data...');
-    const url=RAW_BASE+filename;
-    const txt=await fetchUrlText(url);
+  async function loadFromDataParam(b64){
+    show('Loading embedded data...');
+    let txt=b64;
+    if(/^data:application\/json;base64,/.test(txt)) txt=txt.replace(/^data:application\/json;base64,/,'');
+    const decoded=base64DecodeUnicode(txt);
+    allData=JSON.parse(decoded);
+    buildFilters();hide();updateLayer();
+  }
+  async function loadFromGeoParam(url){
+    show('Fetching external data...');
+    const txt=await fetchUrlText(decodeURIComponent(url));
+    allData=JSON.parse(txt);
+    buildFilters();hide();updateLayer();
+  }
+  async function loadFromFileParam(filename){
+    show('Fetching file from GitHub raw URL...');
+    const candidate=RAW_BASE+filename;
+    const txt=await fetchUrlText(candidate);
     allData=JSON.parse(txt);
     buildFilters();hide();updateLayer();
   }
 
   (async function init(){
     show('Preparing map...');
-    const fname=fileParam||'dealdata.geojson?t='+Date.now();
-    try{await loadFromFile(fname);}catch(e){hide();alert('Failed to load data '+e);}
+    try{
+      if(dataParam) return loadFromDataParam(dataParam);
+      if(geoParam) return loadFromGeoParam(geoParam);
+      if(fileParam) return loadFromFileParam(fileParam);
+      await loadFromFileParam('dealdata.geojson');
+    }catch(e){
+      hide();
+      console.error('Data load error:',e);
+      alert('Unable to load data: '+e.message);
+    }
   })();
 
-  // ---------- Collapsible Filters ----------
+  // ---------- Collapsible ----------
   const toggleBtn=document.getElementById('toggleBtn');
   const filtersBox=document.getElementById('filters');
   toggleBtn.onclick=()=>{
