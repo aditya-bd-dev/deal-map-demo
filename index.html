@@ -50,9 +50,11 @@
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
+  // ---------- Configuration ----------
   const RAW_BASE = 'https://raw.githubusercontent.com/aditya-bd-dev/priv-data/main/';
   const DEFAULT_CENTER=[20.5937,78.9629],DEFAULT_ZOOM=5;
 
+  // ---------- Map Setup ----------
   const map=L.map('map').setView(DEFAULT_CENTER,DEFAULT_ZOOM);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     {maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
@@ -62,7 +64,7 @@
 
   let allData=null,dealLayer=null;
 
-  // ---------- Icon setup for pin markers ----------
+  // ---------- Marker Icons ----------
   const ICONS = {
     Active: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png",
     "On Hold": "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-orange.png",
@@ -80,7 +82,7 @@
     });
   }
 
-  // ---------- Filter sections ----------
+  // ---------- Filters ----------
   const filterSections={Status:"statusFilters",Stage:"stageFilters",City:"cityFilters",PrimaryOwner:"ownerFilters"};
   function buildFilters(){
     for(const k in filterSections){
@@ -91,7 +93,6 @@
     document.querySelectorAll('#filterContent input').forEach(cb=>cb.onchange=updateLayer);
   }
 
-  // ---------- Filtering ----------
   function updateLayer(){
     if(!allData)return;
     if(dealLayer){map.removeLayer(dealLayer);dealLayer=null;}
@@ -137,29 +138,18 @@
     }catch(e){}
   }
 
-  // ---------- Data loading ----------
+  // ---------- Data Loading ----------
   const params=new URLSearchParams(window.location.search);
-  const dataParam=params.get('data'),geoParam=params.get('geo'),fileParam=params.get('file');
+  const fileParam=params.get('file');
 
-  async function fetchUrlText(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error(r.status);return r.text();}
-  function base64DecodeUnicode(b64){return decodeURIComponent(Array.prototype.map.call(atob(b64),c=>'%' + ('00'+c.charCodeAt(0).toString(16)).slice(-2)).join(''));}
+  async function fetchUrlText(url){
+    const r=await fetch(url,{cache:'no-store'});
+    if(!r.ok) throw new Error(r.status);
+    return r.text();
+  }
 
-  async function loadFromDataParam(b64){
-    show('Loading embedded data...');
-    let txt=b64;
-    if(/^data:application\/json;base64,/.test(txt)) txt=txt.replace(/^data:application\/json;base64,/,'');
-    const decoded=base64DecodeUnicode(txt);
-    allData=JSON.parse(decoded);
-    buildFilters();hide();updateLayer();
-  }
-  async function loadFromGeoParam(url){
-    show('Fetching external data...');
-    const txt=await fetchUrlText(decodeURIComponent(url));
-    allData=JSON.parse(txt);
-    buildFilters();hide();updateLayer();
-  }
   async function loadFromFileParam(filename){
-    show('Fetching file from GitHub raw URL...');
+    show('Fetching GeoJSON from GitHub...');
     const candidate=RAW_BASE+filename;
     const txt=await fetchUrlText(candidate);
     allData=JSON.parse(txt);
@@ -169,9 +159,8 @@
   (async function init(){
     show('Preparing map...');
     try{
-      if(dataParam) return loadFromDataParam(dataParam);
-      if(geoParam) return loadFromGeoParam(geoParam);
       if(fileParam) return loadFromFileParam(fileParam);
+      // fallback: default file
       await loadFromFileParam('dealdata.geojson');
     }catch(e){
       hide();
@@ -180,7 +169,7 @@
     }
   })();
 
-  // ---------- Collapsible ----------
+  // ---------- Collapsible Filter ----------
   const toggleBtn=document.getElementById('toggleBtn');
   const filtersBox=document.getElementById('filters');
   toggleBtn.onclick=()=>{
