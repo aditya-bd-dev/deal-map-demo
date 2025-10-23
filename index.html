@@ -4,275 +4,183 @@
   <meta charset="utf-8" />
   <title>Deal Map Viewer</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
     html,body{height:100%;margin:0;padding:0}
     #map{width:100%;height:100vh}
+
     .loading{
       position:absolute;left:12px;top:12px;z-index:1000;
       background:#fff;padding:8px 10px;border-radius:6px;
       font-family:Arial,Helvetica,sans-serif;font-size:13px;
       box-shadow:0 2px 8px rgba(0,0,0,.18)
     }
+
     .filter-box{
       position:absolute;right:12px;top:12px;z-index:1000;
       background:#fff;padding:10px;border-radius:8px;
       font-family:Arial,Helvetica,sans-serif;font-size:13px;
       box-shadow:0 2px 12px rgba(0,0,0,.2);max-height:70vh;
-      overflow:auto;width:260px;
+      overflow:auto;width:260px;transition:max-height 0.3s ease;
     }
+    .filter-box.collapsed{max-height:40px;overflow:hidden}
+    .filter-toggle{
+      background:#1976d2;color:#fff;border:none;padding:6px 10px;
+      border-radius:4px;cursor:pointer;font-weight:bold;
+    }
+    .filter-toggle:hover{background:#1565c0}
     .filter-box b{display:block;margin-top:6px}
-    .filter-box label{display:block;margin:6px 0;cursor:pointer}
+    .filter-box label{display:block;margin:4px 0;cursor:pointer}
     .hint{font-size:11px;color:#666;margin-top:8px}
-    @media (max-width:640px){
-      .filter-box{right:8px;left:8px;width:auto}
-    }
+    @media (max-width:640px){.filter-box{right:8px;left:8px;width:auto}}
   </style>
 </head>
 <body>
   <div id="map"></div>
   <div id="loading" class="loading">Preparing map…</div>
 
-  <div id="filters" class="filter-box" aria-hidden="false">
-    <b>Status</b>
-    <label><input type="checkbox" class="status-filter" value="Active"> Active</label>
-    <label><input type="checkbox" class="status-filter" value="On Hold"> On Hold</label>
-    <label><input type="checkbox" class="status-filter" value="Dropped"> Dropped</label>
-
-    <b>Stage</b>
-    <label><input type="checkbox" class="stage-filter" value="Qualified Lead"> Qualified Lead</label>
-    <label><input type="checkbox" class="stage-filter" value="Site Visit"> Site Visit</label>
-    <label><input type="checkbox" class="stage-filter" value="Prelim Offer"> Prelim Offer</label>
-    <label><input type="checkbox" class="stage-filter" value="Advance Offer"> Advance Offer</label>
-    <label><input type="checkbox" class="stage-filter" value="Final Offer"> Final Offer</label>
-    <label><input type="checkbox" class="stage-filter" value="Term Sheet"> Term Sheet</label>
-
-    <div class="hint">Initial state: all boxes are <b>unchecked</b> and the map shows <b>all deals</b>. Tick boxes to filter (checks act as a union).</div>
+  <div id="filters" class="filter-box">
+    <button id="toggleBtn" class="filter-toggle" type="button">▼ Filters</button>
+    <div id="filterContent">
+      <b>Status</b><div id="statusFilters"></div>
+      <b>Stage</b><div id="stageFilters"></div>
+      <b>City</b><div id="cityFilters"></div>
+      <b>Primary Owner</b><div id="ownerFilters"></div>
+      <div class="hint">Select filters (intersection logic). Unchecked = show all.</div>
+    </div>
   </div>
 
-  <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
-  // ------------- CONFIG -------------
   const RAW_BASE = 'https://raw.githubusercontent.com/aditya-bd-dev/priv-data/main/';
   const DEFAULT_CENTER = [20.5937,78.9629];
   const DEFAULT_ZOOM = 5;
-  // ------------------------------------
 
-  const ICONS = {
-    green: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png",
-    orange: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-orange.png",
-    red: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png",
-    blue: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png",
-    shadow: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png"
-  };
-  function makeIcon(url){ return L.icon({ iconUrl:url, iconSize:[25,41], iconAnchor:[12,41], popupAnchor:[1,-34], shadowUrl:ICONS.shadow, shadowSize:[41,41] }); }
-  const ICON_MAP = { Active: makeIcon(ICONS.green), "On Hold": makeIcon(ICONS.orange), Dropped: makeIcon(ICONS.red) };
+  const map = L.map('map').setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    {maxZoom:19, attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
 
-  const map = L.map('map', { zoomControl: true }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+  const loadingEl=document.getElementById('loading');
+  function show(m){loadingEl.style.display='block';loadingEl.innerText=m||'Loading...';}
+  function hide(){loadingEl.style.display='none';}
 
-  const loadingEl = document.getElementById('loading');
-  function show(msg){ loadingEl.style.display='block'; loadingEl.innerText = msg || 'Loading...'; }
-  function hide(){ loadingEl.style.display='none'; }
+  let allData=null, dealLayer=null;
 
-  let allData = null;
-  let dealLayer = null;
-
-  const params = new URLSearchParams(window.location.search);
-  const dataParam = params.get('data');
-  const geoParam  = params.get('geo');
-  const fileParam = params.get('file');
-
-  function attachFilters(){
-    const inputs = document.querySelectorAll('.filter-box input');
-    inputs.forEach(cb => { cb.checked = false; cb.onchange = updateLayer; });
+  // ---------- Color logic ----------
+  function getStageColor(status,stage){
+    const colors={
+      "Active":{
+        "Qualified Lead":"#A5D6A7","Site Visit":"#66BB6A","Prelim Offer":"#388E3C",
+        "Advance Offer":"#2E7D32","Final Offer":"#1B5E20","Term Sheet":"#009688"
+      },
+      "On Hold":{
+        "Qualified Lead":"#FFE082","Site Visit":"#FFD54F","Prelim Offer":"#FFCA28",
+        "Advance Offer":"#FFC107","Final Offer":"#FFB300","Term Sheet":"#FFA000"
+      },
+      "Dropped":{
+        "Qualified Lead":"#EF9A9A","Site Visit":"#E57373","Prelim Offer":"#EF5350",
+        "Advance Offer":"#F44336","Final Offer":"#D32F2F","Term Sheet":"#B71C1C"
+      }
+    };
+    return colors[status]?.[stage] || "#9E9E9E";
   }
 
+  function colorCircle(latlng,color){
+    return L.circleMarker(latlng,{radius:8,fillColor:color,color:"#333",weight:1,fillOpacity:0.9});
+  }
+
+  // ---------- Filter building ----------
+  const filterSections={
+    Status:"statusFilters",Stage:"stageFilters",City:"cityFilters",PrimaryOwner:"ownerFilters"
+  };
+  function buildFilters(){
+    for(const k in filterSections){
+      const container=document.getElementById(filterSections[k]);
+      const values=[...new Set(allData.features.map(f=>f.properties?.[k]).filter(Boolean))].sort();
+      container.innerHTML=values.map(v=>`<label><input type="checkbox" class="${k}-filter" value="${v}"> ${v}</label>`).join('');
+    }
+    document.querySelectorAll('#filterContent input').forEach(cb=>cb.onchange=updateLayer);
+  }
+
+  // ---------- Filtering logic ----------
   function updateLayer(){
-    if(!allData) return;
-    if(dealLayer){ try{ map.removeLayer(dealLayer); }catch(e){} dealLayer = null; }
+    if(!allData)return;
+    if(dealLayer){map.removeLayer(dealLayer);dealLayer=null;}
 
-    const statusChecked = Array.from(document.querySelectorAll('.status-filter:checked')).map(i=>i.value);
-    const stageChecked = Array.from(document.querySelectorAll('.stage-filter:checked')).map(i=>i.value);
-    const anyChecked = statusChecked.length > 0 || stageChecked.length > 0;
+    const filters={};
+    for(const k in filterSections){
+      filters[k]=Array.from(document.querySelectorAll(`.${k}-filter:checked`)).map(i=>i.value);
+    }
+    const anyActive=Object.values(filters).some(a=>a.length>0);
 
-    dealLayer = L.geoJSON(allData, {
-      filter: function(feature){
-        if(!anyChecked) return true;
-        const s = (feature.properties && feature.properties.Status) || '';
-        const st = (feature.properties && feature.properties.Stage) || '';
-        return (statusChecked.includes(s) || stageChecked.includes(st));
+    dealLayer=L.geoJSON(allData,{
+      filter:f=>{
+        if(!anyActive)return true;
+        const p=f.properties||{};
+        for(const k in filters){
+          if(filters[k].length>0 && !filters[k].includes(p[k])) return false;
+        }
+        return true;
       },
-      pointToLayer: function(feature, latlng){
-        const s = (feature.properties && feature.properties.Status) || '';
-        return L.marker(latlng, { icon: ICON_MAP[s] || makeIcon(ICONS.blue) });
+      pointToLayer:(f,latlng)=>{
+        const p=f.properties||{};
+        const color=getStageColor(p.Status,p.Stage);
+        return colorCircle(latlng,color);
       },
-      onEachFeature: function(feature, layer){
-        const p = feature.properties || {};
-        const html = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:13px">' +
-          '<b>Lead:</b> '+(p.LeadName||'')+'<br/>' +
-          '<b>DealID:</b> '+(p.DealID||'')+'<br/>' +
-          '<b>Primary Owner:</b> '+(p.PrimaryOwner||'')+'<br/>' +
-          '<b>Status:</b> '+(p.Status||'')+'<br/>' +
-          '<b>Stage:</b> '+(p.Stage||'')+'<br/>' +
-          '<b>City:</b> '+(p.City||'')+'<br/>' +
-          '<b>Land Extent:</b> '+(p['Land Extent']||p.Land_Extent||'')+'<br/>' +
-          '<b>Lead Received On:</b> '+(p.LeadReceivedOn||'')+'<br/>' +
-          '<b>Site Location:</b> '+(p.SiteLocation||'')+'<br/>' +
-          '<b>Comments:</b> '+(p.Comments||'') +
-          '</div>';
+      onEachFeature:(f,layer)=>{
+        const p=f.properties||{};
+        const html=`<div style="font-family:Arial,Helvetica,sans-serif;font-size:13px">
+          <b>Lead:</b> ${p.LeadName||''}<br/>
+          <b>DealID:</b> ${p.DealID||''}<br/>
+          <b>Primary Owner:</b> ${p.PrimaryOwner||''}<br/>
+          <b>Status:</b> ${p.Status||''}<br/>
+          <b>Stage:</b> ${p.Stage||''}<br/>
+          <b>City:</b> ${p.City||''}<br/>
+          <b>Land Extent:</b> ${p['Land Extent']||p.Land_Extent||''}<br/>
+          <b>Lead Received On:</b> ${p.LeadReceivedOn||''}<br/>
+          <b>Site Location:</b> ${p.SiteLocation||''}<br/>
+          <b>Comments:</b> ${p.Comments||''}</div>`;
         layer.bindPopup(html);
       }
     }).addTo(map);
 
     try{
-      const b = dealLayer.getBounds();
-      if(b && b.isValid()){
-        map.fitBounds(b, { padding: [40,40], maxZoom: 16 });
-      }
+      const b=dealLayer.getBounds();
+      if(b&&b.isValid()) map.fitBounds(b,{padding:[40,40],maxZoom:16});
     }catch(e){}
   }
 
-  function decodeDataParamToText(s){
-    if(!s) return null;
-    try{ return decodeURIComponent(s); } catch(e){ return s; }
+  // ---------- Data loading ----------
+  const params=new URLSearchParams(window.location.search);
+  const dataParam=params.get('data'),geoParam=params.get('geo'),fileParam=params.get('file');
+
+  async function fetchUrlText(u){
+    const r=await fetch(u,{cache:'no-store'});
+    if(!r.ok)throw new Error(r.statusText);
+    return r.text();
   }
 
-  async function fetchUrlText(url, opts){
-    const fetchOpts = { cache: 'no-store' };
-    if(opts && opts.credentials) fetchOpts.credentials = 'include';
-    try{
-      const r = await fetch(url, fetchOpts);
-      if(!r.ok) throw new Error('HTTP ' + r.status + ' ' + r.statusText);
-      const txt = await r.text();
-      if(/<\s*html/i.test(txt)) throw new Error('Received HTML instead of JSON. Possible auth/login or viewer page.');
-      return txt;
-    }catch(err){ throw err; }
+  async function loadFromFile(filename){
+    show('Fetching data...');
+    const url=RAW_BASE+filename;
+    const txt=await fetchUrlText(url);
+    allData=JSON.parse(txt);
+    buildFilters();hide();updateLayer();
   }
 
-  // robust base64->utf8 decoder (works for unicode content)
-  function base64DecodeUnicode(b64){
-    try{
-      return decodeURIComponent(Array.prototype.map.call(atob(b64), function(c){
-        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-      }).join(''));
-    }catch(e){
-      // fallback to atob (may break with non-ascii)
-      return atob(b64);
-    }
-  }
-
-  async function loadFromDataParam(b64OrJson){
-    show('Loading embedded data...');
-    try{
-      let txt = decodeDataParamToText(b64OrJson);
-      // if it looks like a data: URL with base64
-      if(/^data:application\/json;base64,/.test(txt)){
-        txt = txt.replace(/^data:application\/json;base64,/, '');
-        txt = base64DecodeUnicode(txt);
-      } else {
-        // If the decoded text doesn't start with { or [, try base64 decode (some flows may pass base64 directly)
-        const trimmed = (txt||'').trim();
-        if(trimmed && !trimmed.startsWith('{') && !trimmed.startsWith('[')){
-          try {
-            const decoded = base64DecodeUnicode(trimmed);
-            // if decode looks like JSON, use it
-            if(decoded.trim().startsWith('{') || decoded.trim().startsWith('[')) txt = decoded;
-          } catch(e){
-            // keep txt as-is
-          }
-        }
-      }
-      const json = JSON.parse(txt);
-      allData = json;
-      attachFilters();
-      hide();
-      setTimeout(updateLayer, 50);
-    }catch(err){
-      hide();
-      console.error(err);
-      alert('Failed to parse embedded data: ' + (err.message||err));
-    }
-  }
-
-  async function loadFromGeoParam(url){
-    show('Fetching data from provided URL...');
-    try{
-      try{
-        const txt = await fetchUrlText(decodeURIComponent(url), { credentials: true });
-        allData = JSON.parse(txt);
-        attachFilters();
-        hide();
-        setTimeout(updateLayer, 50);
-        return;
-      }catch(errCred){
-        console.warn('Fetch with credentials failed:', errCred);
-        const txt2 = await fetchUrlText(decodeURIComponent(url), { credentials: false });
-        allData = JSON.parse(txt2);
-        attachFilters();
-        hide();
-        setTimeout(updateLayer, 50);
-        return;
-      }
-    }catch(err){
-      hide();
-      console.error(err);
-      alert('Could not fetch deal data from provided URL: ' + err.message + '\nIf this is an org-scoped link, ensure you are signed in to SharePoint in this browser tab.');
-    }
-  }
-
-  async function loadFromFileParam(filename){
-    if(!filename){ alert('Missing file parameter.'); return; }
-    show('Fetching file from GitHub raw URL...');
-    const candidate = RAW_BASE + filename;
-    try{
-      const txt = await fetchUrlText(candidate, { credentials: false });
-      allData = JSON.parse(txt);
-      attachFilters();
-      hide();
-      setTimeout(updateLayer, 50);
-      return;
-    }catch(err){
-      hide();
-      console.error('raw.githubusercontent fetch failed:', err);
-      alert('Could not fetch file from raw.githubusercontent. If your priv-data repo is private, raw.githubusercontent will not serve the file publicly. Consider returning data inline (data=) or using a SAS URL or proxy.');
-    }
-  }
-
-  (function init(){
+  (async function init(){
     show('Preparing map...');
-    if(dataParam){
-      loadFromDataParam(dataParam).catch(e=>{ console.error(e); });
-      return;
-    }
-    if(geoParam){
-      loadFromGeoParam(geoParam).catch(e=>{ console.error(e); });
-      return;
-    }
-    if(fileParam){
-      loadFromFileParam(fileParam).catch(e=>{ console.error(e); });
-      return;
-    }
-    const fallback = 'dealdata.geojson?t=' + Date.now();
-    show('Attempting fallback fetch...');
-    fetchUrlText(fallback, { credentials:false }).then(txt=>{
-      try{
-        allData = JSON.parse(txt);
-        attachFilters();
-        hide();
-        setTimeout(updateLayer, 50);
-      }catch(e){
-        hide();
-        alert('No data provided and fallback file not found. Launch the viewer with ?data=<URI-encoded JSON> or ?geo=<download URL> or ?file=<filename>.');
-      }
-    }).catch(err=>{
-      hide();
-      console.warn('Fallback fetch failed', err);
-      alert('No data provided. Launch the viewer with ?data=<URI-encoded JSON> or ?geo=<download URL> or ?file=<filename>.');
-    });
+    const fname=fileParam||'dealdata.geojson?t='+Date.now();
+    try{await loadFromFile(fname);}catch(e){hide();alert('Failed to load data '+e);}
   })();
+
+  // ---------- Collapsible Filters ----------
+  const toggleBtn=document.getElementById('toggleBtn');
+  const filtersBox=document.getElementById('filters');
+  toggleBtn.onclick=()=>{
+    filtersBox.classList.toggle('collapsed');
+    toggleBtn.textContent=filtersBox.classList.contains('collapsed')?'▲ Filters':'▼ Filters';
+  };
   </script>
 </body>
 </html>
