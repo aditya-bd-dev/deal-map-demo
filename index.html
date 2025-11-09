@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Deal Map Viewer</title>
+  <title>Deal & Competitor Map Viewer</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
@@ -55,10 +55,10 @@
     </div>
   </div>
 
-  <div class="comp-legend" id="legend" style="display:none">
+  <div class="comp-legend" id="legend">
     <b>Legend</b>
-    <div><span class="dot" style="background:#2b8a3e"></span>Deal markers</div>
-    <div><span class="dot" style="background:#ff4d4f"></span>Competitor markers</div>
+    <div><span class="dot" style="background:#2b8a3e"></span>Active / Deals</div>
+    <div><span class="dot" style="background:#1565c0"></span>Competitor</div>
   </div>
 
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
@@ -77,6 +77,7 @@
 
   let allData=null,dealLayer=null;
   window.competitorLayer=null;
+  let allDealsVisible=true;
 
   // ---------- Marker Icons ----------
   const ICONS = {
@@ -145,7 +146,7 @@
           <b>Status:</b> ${p.Status||''}<br/>
           <b>Stage:</b> ${p.Stage||''}<br/>
           <b>City:</b> ${p.City||''}<br/>
-          <b>Land Extent:</b> ${p['Land Extent']||p.Land_Extent||''}<br/>
+          <b>Land Extent:</b> ${p['Land Extent']||p.landextent||''}<br/>
           <b>Lead Received On:</b> ${p.LeadReceivedOn||''}<br/>
           <b>Site Location:</b> ${p.SiteLocation||''}<br/>
           <b>Comments:</b> ${p.Comments||''}</div>
@@ -158,12 +159,9 @@
 
         layer.on('popupopen',()=>{
           const btn=document.getElementById(btnId);
-          const clr=document.getElementById(clearId);
           if(btn) btn.onclick=()=>showCompetitorsNearby(lat,lon,10);
-          if(clr) clr.onclick=()=>{
-            if(window.competitorLayer){map.removeLayer(window.competitorLayer);window.competitorLayer=null;}
-            document.getElementById('legend').style.display='none';
-          };
+          const clr=document.getElementById(clearId);
+          if(clr) clr.onclick=()=>clearCompetitors();
         });
       }
     }).addTo(map);
@@ -193,7 +191,6 @@
       allData=JSON.parse(txt);
     }catch(e){
       hide();
-      console.error('Data load error:',e);
       alert('Unable to load deals data.');
       return;
     }
@@ -214,73 +211,66 @@
     const R=6371;
     const dLat=deg2rad(lat2-lat1);
     const dLon=deg2rad(lon2-lon1);
-    const a=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(deg2rad(lat1))*Math.cos(deg2rad(lat2))*Math.sin(dLon/2)*Math.sin(dLon/2);
-    const c=2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
-    return R*c;
+    const a=Math.sin(dLat/2)**2+
+             Math.cos(deg2rad(lat1))*Math.cos(deg2rad(lat2))*Math.sin(dLon/2)**2;
+    return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
   }
 
   async function showCompetitorsNearby(lat,lon,radiusKm){
     if(!competitorParam){alert('No competitor file specified.');return;}
-    if(window.competitorLayer){map.removeLayer(window.competitorLayer);window.competitorLayer=null;}
-    document.getElementById('legend').style.display='none';
+    if(window.competitorLayer){try{map.removeLayer(window.competitorLayer);}catch(e){}window.competitorLayer=null;}
 
-    const url=RAW_BASE+competitorParam;
     show('Loading competitor data...');
+    const url=RAW_BASE+competitorParam;
     let data;
     try{
       const txt=await fetchUrlText(url);
       data=JSON.parse(txt);
-    }catch(err){
-      hide();
-      alert('Failed to load competitor file.');
-      return;
-    }
+    }catch(err){hide();alert('Failed to load competitor file.');return;}
 
     const nearbyFeatures=data.features.filter(f=>{
       if(!f.geometry||!f.geometry.coordinates)return false;
-      const cLon=f.geometry.coordinates[0];
-      const cLat=f.geometry.coordinates[1];
+      const [cLon,cLat]=f.geometry.coordinates;
       if(cLon===null||cLat===null)return false;
-      const d=getDistanceFromLatLonInKm(lat,lon,cLat,cLon);
-      return d<=radiusKm;
+      return getDistanceFromLatLonInKm(lat,lon,cLat,cLon)<=radiusKm;
     });
-    const nearby={type:"FeatureCollection",features:nearbyFeatures};
+    hide();
+    if(!nearbyFeatures.length){alert('No competitors found within '+radiusKm+' km.');return;}
 
-    window.competitorLayer=L.geoJSON(nearby,{
-      pointToLayer:(feature,latlng)=>{
-        return L.circleMarker(latlng,{
-          radius:6,fillColor:'#ff4d4f',color:'#b21f1f',
-          weight:1,opacity:1,fillOpacity:0.9
-        });
-      },
+    // Hide all deals while showing competitors
+    if(dealLayer){map.removeLayer(dealLayer);allDealsVisible=false;}
+
+    const competitorIcon=L.icon({
+      iconUrl:"https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png",
+      shadowUrl:ICONS.shadow,iconSize:[25,41],iconAnchor:[12,41],
+      popupAnchor:[1,-34],shadowSize:[41,41]
+    });
+
+    window.competitorLayer=L.geoJSON({type:"FeatureCollection",features:nearbyFeatures},{
+      pointToLayer:(f,latlng)=>L.marker(latlng,{icon:competitorIcon}),
       onEachFeature:(f,layer)=>{
         const p=f.properties||{};
         const html=`<div style="font-family:Arial,Helvetica,sans-serif;font-size:13px">
-          <b>${p.SiteLocation||'Competitor'}</b><br/>
-          ${p.Value?('Value: ₹'+p.Value+'<br/>'):''}
-          ${p.DevType?('Dev Type: '+p.DevType+'<br/>'):''}
-          ${p.Seller?('Seller: '+p.Seller+'<br/>'):''}
-          ${p.Broker?('Broker: '+p.Broker+'<br/>'):''}
-          ${p.APR?('APR: '+p.APR+'<br/>'):''}
-          ${p.SaleableArea?('Saleable Area: '+p.SaleableArea+'<br/>'):''}
-          ${p.Structure?('Structure: '+p.Structure+'<br/>'):''}
+          <b>Extent:</b> ${p.extent||''}<br/>
+          <b>Value:</b> ${p.value||''}<br/>
+          <b>Dev Type:</b> ${p['dev type']||p.devtype||''}<br/>
+          <b>Seller:</b> ${p.seller||''}<br/>
+          <b>Broker:</b> ${p.broker||''}<br/>
+          <b>APR:</b> ${p.apr||''}<br/>
+          <b>Saleable Area:</b> ${p['saleable area']||p.saleablearea||''}<br/>
+          <b>Structure:</b> ${p.structure||''}<br/>
         </div>`;
         layer.bindPopup(html);
       }
     }).addTo(map);
-    hide();
 
-    if(nearbyFeatures.length>0){
-      document.getElementById('legend').style.display='block';
-      const bounds=window.competitorLayer.getBounds();
-      if(bounds&&bounds.isValid()){
-        bounds.extend([lat,lon]);
-        map.fitBounds(bounds,{padding:[60,60]});
-      }else map.setView([lat,lon],13);
-    }else{
-      alert('No competitors found within '+radiusKm+' km.');
-      map.setView([lat,lon],13);
-    }
+    const bounds=window.competitorLayer.getBounds();
+    if(bounds&&bounds.isValid()) map.fitBounds(bounds,{padding:[60,60]});
+  }
+
+  function clearCompetitors(){
+    if(window.competitorLayer){try{map.removeLayer(window.competitorLayer);}catch(e){}window.competitorLayer=null;}
+    if(!allDealsVisible&&allData){updateLayer();allDealsVisible=true;}
   }
 
   // ---------- Collapsible Filter ----------
