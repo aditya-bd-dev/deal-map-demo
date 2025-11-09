@@ -31,6 +31,13 @@
     .filter-box label{display:block;margin:4px 0;cursor:pointer}
     .hint{font-size:11px;color:#666;margin-top:8px}
     @media(max-width:640px){.filter-box{right:8px;left:8px;width:auto}}
+    .comp-legend {
+      position:absolute; left:12px; bottom:12px; z-index:1000;
+      background:#fff;padding:8px;border-radius:6px; box-shadow:0 2px 8px rgba(0,0,0,.18);
+      font-family:Arial,Helvetica,sans-serif;font-size:13px;
+    }
+    .comp-legend b{display:block;margin-bottom:4px}
+    .comp-legend .dot{display:inline-block;width:12px;height:12px;border-radius:6px;margin-right:8px;vertical-align:middle}
   </style>
 </head>
 <body>
@@ -48,6 +55,12 @@
     </div>
   </div>
 
+  <div class="comp-legend" id="legend" style="display:none">
+    <b>Legend</b>
+    <div><span class="dot" style="background:#2b8a3e"></span>Deal markers</div>
+    <div><span class="dot" style="background:#ff4d4f"></span>Competitor markers</div>
+  </div>
+
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
   // ---------- Configuration ----------
@@ -63,6 +76,7 @@
   function hide(){loadingEl.style.display='none';}
 
   let allData=null,dealLayer=null;
+  window.competitorLayer=null;
 
   // ---------- Marker Icons ----------
   const ICONS = {
@@ -118,6 +132,12 @@
       },
       onEachFeature:(f,layer)=>{
         const p=f.properties||{};
+        const lat=f.geometry.coordinates[1];
+        const lon=f.geometry.coordinates[0];
+        const idToken=(p.DealID||p.__PowerAppsId__||Math.random().toString(36).slice(2,8));
+        const btnId='viewCompBtn_'+idToken;
+        const clearId='clearCompBtn_'+idToken;
+
         const html=`<div style="font-family:Arial,Helvetica,sans-serif;font-size:13px">
           <b>Lead:</b> ${p.LeadName||''}<br/>
           <b>DealID:</b> ${p.DealID||''}<br/>
@@ -128,10 +148,26 @@
           <b>Land Extent:</b> ${p['Land Extent']||p.Land_Extent||''}<br/>
           <b>Lead Received On:</b> ${p.LeadReceivedOn||''}<br/>
           <b>Site Location:</b> ${p.SiteLocation||''}<br/>
-          <b>Comments:</b> ${p.Comments||''}</div>`;
+          <b>Comments:</b> ${p.Comments||''}</div>
+          <div style="margin-top:8px">
+            <button id="${btnId}" style="padding:6px 8px;border-radius:4px;background:#1976d2;color:#fff;border:none;cursor:pointer">View Nearby Competitors</button>
+            <button id="${clearId}" style="padding:6px 8px;border-radius:4px;background:#eee;color:#333;border:none;cursor:pointer;margin-left:6px">Clear</button>
+          </div>`;
+
         layer.bindPopup(html);
+
+        layer.on('popupopen',()=>{
+          const btn=document.getElementById(btnId);
+          const clr=document.getElementById(clearId);
+          if(btn) btn.onclick=()=>showCompetitorsNearby(lat,lon,10);
+          if(clr) clr.onclick=()=>{
+            if(window.competitorLayer){map.removeLayer(window.competitorLayer);window.competitorLayer=null;}
+            document.getElementById('legend').style.display='none';
+          };
+        });
       }
     }).addTo(map);
+
     try{
       const b=dealLayer.getBounds();
       if(b&&b.isValid()) map.fitBounds(b,{padding:[40,40],maxZoom:16});
@@ -141,33 +177,111 @@
   // ---------- Data Loading ----------
   const params=new URLSearchParams(window.location.search);
   const fileParam=params.get('file');
+  const competitorParam=params.get('competitor');
 
   async function fetchUrlText(url){
     const r=await fetch(url,{cache:'no-store'});
-    if(!r.ok) throw new Error(r.status);
+    if(!r.ok) throw new Error(r.status+' '+r.statusText);
     return r.text();
   }
 
   async function loadFromFileParam(filename){
     show('Fetching GeoJSON from GitHub...');
     const candidate=RAW_BASE+filename;
-    const txt=await fetchUrlText(candidate);
-    allData=JSON.parse(txt);
+    try{
+      const txt=await fetchUrlText(candidate);
+      allData=JSON.parse(txt);
+    }catch(e){
+      hide();
+      console.error('Data load error:',e);
+      alert('Unable to load deals data.');
+      return;
+    }
     buildFilters();hide();updateLayer();
   }
 
   (async function init(){
     show('Preparing map...');
     try{
-      if(fileParam) return loadFromFileParam(fileParam);
-      // fallback: default file
-      await loadFromFileParam('dealdata.geojson');
-    }catch(e){
-      hide();
-      console.error('Data load error:',e);
-      alert('Unable to load data: '+e.message);
-    }
+      if(fileParam) await loadFromFileParam(fileParam);
+      else await loadFromFileParam('dealdata.geojson');
+    }catch(e){hide();}
   })();
+
+  // ---------- Competitor Logic ----------
+  function deg2rad(deg){return deg*(Math.PI/180);}
+  function getDistanceFromLatLonInKm(lat1,lon1,lat2,lon2){
+    const R=6371;
+    const dLat=deg2rad(lat2-lat1);
+    const dLon=deg2rad(lon2-lon1);
+    const a=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(deg2rad(lat1))*Math.cos(deg2rad(lat2))*Math.sin(dLon/2)*Math.sin(dLon/2);
+    const c=2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+    return R*c;
+  }
+
+  async function showCompetitorsNearby(lat,lon,radiusKm){
+    if(!competitorParam){alert('No competitor file specified.');return;}
+    if(window.competitorLayer){map.removeLayer(window.competitorLayer);window.competitorLayer=null;}
+    document.getElementById('legend').style.display='none';
+
+    const url=RAW_BASE+competitorParam;
+    show('Loading competitor data...');
+    let data;
+    try{
+      const txt=await fetchUrlText(url);
+      data=JSON.parse(txt);
+    }catch(err){
+      hide();
+      alert('Failed to load competitor file.');
+      return;
+    }
+
+    const nearbyFeatures=data.features.filter(f=>{
+      if(!f.geometry||!f.geometry.coordinates)return false;
+      const cLon=f.geometry.coordinates[0];
+      const cLat=f.geometry.coordinates[1];
+      if(cLon===null||cLat===null)return false;
+      const d=getDistanceFromLatLonInKm(lat,lon,cLat,cLon);
+      return d<=radiusKm;
+    });
+    const nearby={type:"FeatureCollection",features:nearbyFeatures};
+
+    window.competitorLayer=L.geoJSON(nearby,{
+      pointToLayer:(feature,latlng)=>{
+        return L.circleMarker(latlng,{
+          radius:6,fillColor:'#ff4d4f',color:'#b21f1f',
+          weight:1,opacity:1,fillOpacity:0.9
+        });
+      },
+      onEachFeature:(f,layer)=>{
+        const p=f.properties||{};
+        const html=`<div style="font-family:Arial,Helvetica,sans-serif;font-size:13px">
+          <b>${p.SiteLocation||'Competitor'}</b><br/>
+          ${p.Value?('Value: ₹'+p.Value+'<br/>'):''}
+          ${p.DevType?('Dev Type: '+p.DevType+'<br/>'):''}
+          ${p.Seller?('Seller: '+p.Seller+'<br/>'):''}
+          ${p.Broker?('Broker: '+p.Broker+'<br/>'):''}
+          ${p.APR?('APR: '+p.APR+'<br/>'):''}
+          ${p.SaleableArea?('Saleable Area: '+p.SaleableArea+'<br/>'):''}
+          ${p.Structure?('Structure: '+p.Structure+'<br/>'):''}
+        </div>`;
+        layer.bindPopup(html);
+      }
+    }).addTo(map);
+    hide();
+
+    if(nearbyFeatures.length>0){
+      document.getElementById('legend').style.display='block';
+      const bounds=window.competitorLayer.getBounds();
+      if(bounds&&bounds.isValid()){
+        bounds.extend([lat,lon]);
+        map.fitBounds(bounds,{padding:[60,60]});
+      }else map.setView([lat,lon],13);
+    }else{
+      alert('No competitors found within '+radiusKm+' km.');
+      map.setView([lat,lon],13);
+    }
+  }
 
   // ---------- Collapsible Filter ----------
   const toggleBtn=document.getElementById('toggleBtn');
